@@ -442,20 +442,31 @@ function computeLayout(state){
   // 同一フェーズで「後ろのレーン→前のレーン」（TBなら右→左）へ渡るエッジは、TOを1つ後ろの
   // 流れ位置へ下げる。こうすると FROM の下(TB)/右(LR)から出て TO の上(TB)/左(LR)へ入る、
   // 自然な下向き（右向き）フローになり、横に戻る線を避けられる。
+  // 下げたノードに続く同じセル内の後続も一緒に下げる。そうしないと
+  // 「下げたノード」だけが後ろへ動いて、後続が前に取り残され、並び順が逆転してしまう。
   {
     const laneIdx = new Map(lanes.map((l, i)=> [l.id, i]));
     const phaseOf = (n)=> state.phases.length ? (n.phaseId || phases[0].id) : '__all';
     const laneOf  = (n)=> n.laneId || (lanes[0] && lanes[0].id);
     const occupied = (ck, flow, cross, exceptId)=>
       (cell.get(ck) || []).some(n=>{ if(n.id === exceptId) return false; const p = nodePos.get(n.id); return p && p.flow === flow && p.cross === cross; });
+    // 追従させる後続を決めるための元の並び順。循環があっても押し下げが止まらなくならないよう、
+    // 「もともと後ろにいた後続」だけを追従対象にする。
+    const origFlow = new Map();
+    state.nodes.forEach(n=>{ const p = nodePos.get(n.id); if(p) origFlow.set(n.id, p.flow); });
     let changed = true, guard = 0;
     while(changed && guard++ < 30){
       changed = false;
       state.links.forEach(e=>{
         const A = state.nodes.find(n=> n.id === e.from), B = state.nodes.find(n=> n.id === e.to);
         if(!A || !B || isDot(A.shape) || isDot(B.shape)) return;
-        if(phaseOf(A) !== phaseOf(B) || laneOf(A) === laneOf(B)) return;   // 同一フェーズ・別レーンのみ
-        if(laneIdx.get(laneOf(B)) >= laneIdx.get(laneOf(A))) return;        // Bが前(左/上)のレーンのときだけ
+        if(phaseOf(A) !== phaseOf(B)) return;                              // 同一フェーズのみ
+        if(laneOf(A) === laneOf(B)){
+          // 同じセル内の後続: もともと後ろにいたものだけ、前に来ないよう追従させる
+          if(!(origFlow.get(B.id) > origFlow.get(A.id))) return;
+        }else if(laneIdx.get(laneOf(B)) >= laneIdx.get(laneOf(A))){
+          return;                                                          // 別レーンはBが前(左/上)のときだけ
+        }
         const pa = nodePos.get(A.id), pb = nodePos.get(B.id);
         if(!pa || !pb || pb.flow > pa.flow) return;
         let f = pa.flow + 1;
