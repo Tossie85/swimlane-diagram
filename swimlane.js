@@ -217,6 +217,42 @@ const LAYOUT = {
   gapInner: 22,       // 同じフェーズ内で流れ方向に並べるときの間隔
   gapCross: 18,       // レーンを横切る向き（分岐で枝を並べたとき）の間隔
 };
+/* 循環している経路の中から「戻りの1本」（DFSの後退辺）だけを見つける。
+   循環に関わるリンクを全部よけてしまうと前後関係の手がかりまで消えてしまい、
+   入口のノードが出口のノードより後ろに並ぶ（例: n18→n19→n20→n18 で n20 が先頭に来る）。
+   戻りの1本だけを外せば、残りのリンクで 入口→…→出口 の順番が正しく決まる。 */
+function findBackEdges(ids, links, orderOf, hasOuterPred){
+  const idSet = ids instanceof Set ? ids : new Set(ids);
+  const list = [...idSet];
+  const out = new Map(list.map(id=> [id, []]));
+  const indeg = new Map(list.map(id=> [id, 0]));
+  const back = new Set();
+  links.forEach(e=>{
+    if(!idSet.has(e.from) || !idSet.has(e.to)) return;
+    if(e.from === e.to){ back.add(e.from + '' + e.to); return; }   // 自分自身への線は常に戻り
+    out.get(e.from).push(e.to);
+    indeg.set(e.to, indeg.get(e.to) + 1);
+  });
+  // DFSの起点は「入口らしい順」に選ぶ。
+  //   1. 入ってくる線が無いノード（明らかな起点）
+  //   2. 外（別セル/別レーン/●）から入ってくるノード（循環の入口）
+  //   3. それ以外は元の並び順
+  const rootRank = (id)=> indeg.get(id) === 0 ? 0 : (hasOuterPred(id) ? 1 : 2);
+  const roots = list.slice().sort((a, b)=> (rootRank(a) - rootRank(b)) || (orderOf(a) - orderOf(b)));
+  const mark = new Map();   // 1=探索中 2=探索済み
+  const visit = (u)=>{
+    mark.set(u, 1);
+    out.get(u).forEach(v=>{
+      const m = mark.get(v) || 0;
+      if(m === 1) back.add(u + '' + v);   // 探索中のノードへ戻る＝循環の戻り
+      else if(m === 0) visit(v);
+    });
+    mark.set(u, 2);
+  };
+  roots.forEach(id=>{ if(!mark.get(id)) visit(id); });
+  return back;
+}
+
 function computeLayout(state){
   const L = LAYOUT;
   const dir = state.direction;
@@ -235,6 +271,7 @@ function computeLayout(state){
     const a = state.nodes.find(n=>n.id === linkId);
     return (a && !isDot(a.shape)) ? a : null;   // 相手も●なら揃えようがないのでグリッドに残す
   };
+  const nodeOrder = new Map(state.nodes.map((n, i)=> [n.id, i]));   // 元の記述順（順番の手がかり）
   const dotPlace = new Map();   // dotNode -> anchorNode（隣に揃えて置く●）
   if(lanes.length){
     state.nodes.forEach(n=>{ if(isDot(n.shape)){ const a = anchorNodeOf(n); if(a) dotPlace.set(n, a); } });
@@ -298,8 +335,15 @@ function computeLayout(state){
   //   ・つながっている場合は必ず TO が FROM より後ろ(下/右)の流れ位置になる（要求2）
   function computeCellLayout(list){
     const ids = new Set(list.map(n=>n.id));
+    // 循環（例: n18→n19→n20→n18）は戻りの1本だけを無視する。全部無視すると
+    // 順番の手がかりが消えて、入口(n18)が出口(n20)より後ろに並んでしまう。
+    const back = findBackEdges(
+      ids, state.links,
+      (id)=> nodeOrder.has(id) ? nodeOrder.get(id) : 0,
+      (id)=> state.links.some(e=> e.to === id && e.from !== id && !ids.has(e.from)),
+    );
     const predOf = (id)=> state.links
-      .filter(e=>e.to === id && ids.has(e.from) && e.from !== id)
+      .filter(e=>e.to === id && ids.has(e.from) && e.from !== id && !back.has(e.from + '' + id))
       .map(e=>e.from);
     const rank = new Map();
     const rankOf = (id, seen)=>{
@@ -483,13 +527,27 @@ function computeLayout(state){
         const p = nodePos.get(n.id);
         return p && p.flow === flow && p.cross === cross;
       });
-    // 循環しているエッジ（TOからFROMへ戻れる）は押し下げの対象外にする。
-    // 対象にすると両方向で押し合い、いつまでも下がり続けてしまう。
+    // 循環している経路は「戻りの1本」だけ押し下げの対象外にする。
+    // 循環に関わる線を全部よけると順序が決まらず、入口のノード(n18)が
+    // 出口のノード(n20)より後ろに置かれたままになる。戻りの1本だけ外せば
+    // 残りは前→後ろに押し下げられ、押し合って下がり続けることもない。
+    const plainIds = new Set(state.nodes.filter(isPlain).map(n=> n.id));
+    const samePhaseLinks = state.links.filter(e=>{
+      const A = nodeById.get(e.from), B = nodeById.get(e.to);
+      return isPlain(A) && isPlain(B) && phaseOf(A) === phaseOf(B);
+    });
+    const backLinks = findBackEdges(
+      plainIds, samePhaseLinks,
+      (id)=> nodeOrder.has(id) ? nodeOrder.get(id) : 0,
+      // 別フェーズや●から入ってくるノードは、そのかたまりの入口とみなす
+      (id)=> state.links.some(e=>{
+        const A = nodeById.get(e.from);
+        return e.to === id && e.from !== id && (!isPlain(A) || phaseOf(A) !== phaseOf(nodeById.get(id)));
+      }),
+    );
     const cyclic = new Set();
     state.links.forEach((e, li)=>{
-      const A = nodeById.get(e.from), B = nodeById.get(e.to);
-      if(!isPlain(A) || !isPlain(B) || phaseOf(A) !== phaseOf(B)) return;
-      if(reaches(e.to, e.from)) cyclic.add(li);
+      if(backLinks.has(e.from + '' + e.to)) cyclic.add(li);
     });
     // 追従させる後続を決めるための元の並び順。
     // 同じセル内は「もともと後ろにいた後続」だけを追従対象にする。
