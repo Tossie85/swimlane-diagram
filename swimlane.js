@@ -82,6 +82,17 @@ function quote(s){
 function labelPixelWidth(label){
   return [...String(label || '')].reduce((n, ch) => n + (/[\x00-\xff]/.test(ch) ? 6 : 11), 0) + 10;
 }
+/* 見出し（レーン名・フェーズ名）のおおよその表示幅（px）。
+   太字なので、全角はフォントサイズとほぼ同じ幅、半角はその約6割として概算する。 */
+function headerTextWidth(label, fontSize){
+  const f = fontSize || 12.5;
+  return [...String(label || '')].reduce((n, ch)=> n + (/[\x00-\xff]/.test(ch) ? f * 0.58 : f), 0);
+}
+/* 幅が決まっている見出し（左の列）で使える行数。帯が厚いほど多く折り返せる。
+   行数を固定にすると、長い名前が「…」で削られて読めなくなるため帯の厚みから決める。 */
+function headerLines(size){
+  return Math.max(2, Math.floor((size - 8) / 15));
+}
 function generateCode(state){
   const lines = ['swimlane'];
   if(state.title) lines.push('title ' + quote(state.title));
@@ -493,12 +504,34 @@ function computeLayout(state){
     const laneOf  = (n)=> n.laneId || (lanes[0] && lanes[0].id);
     const nodeById = new Map(state.nodes.map(n=> [n.id, n]));
     const isPlain = (n)=> !!n && !isDot(n.shape);
-    // 同一フェーズのリンクだけをたどれる隣接表。循環の判定と、後続ノードの判定に使う。
+    // 循環している経路は「戻りの1本」だけ押し下げの対象外にする。
+    // 循環に関わる線を全部よけると順序が決まらず、入口のノード(n18)が
+    // 出口のノード(n20)より後ろに置かれたままになる。戻りの1本だけ外せば
+    // 残りは前→後ろに押し下げられ、押し合って下がり続けることもない。
+    const plainIds = new Set(state.nodes.filter(isPlain).map(n=> n.id));
+    const samePhaseLinks = state.links.filter(e=>{
+      const A = nodeById.get(e.from), B = nodeById.get(e.to);
+      return isPlain(A) && isPlain(B) && phaseOf(A) === phaseOf(B);
+    });
+    const backLinks = findBackEdges(
+      plainIds, samePhaseLinks,
+      (id)=> nodeOrder.has(id) ? nodeOrder.get(id) : 0,
+      // 別フェーズや●から入ってくるノードは、そのかたまりの入口とみなす
+      (id)=> state.links.some(e=>{
+        const A = nodeById.get(e.from);
+        return e.to === id && e.from !== id && (!isPlain(A) || phaseOf(A) !== phaseOf(nodeById.get(id)));
+      }),
+    );
+    // 同一フェーズのリンクだけをたどれる隣接表。後続ノードの判定に使う。
+    // 戻りの1本は入れない。入れるとループの先（例: n2→n3→n4→n2 の n3）が
+    // 「n2の後続」と見なされず、n2が n3 を飛び越えた位置まで押し下げられて、
+    // 間に何も無い空きスロットができてしまう。
     const fwd = new Map();
     state.nodes.forEach(n=> fwd.set(n.id, []));
     state.links.forEach(e=>{
       const A = nodeById.get(e.from), B = nodeById.get(e.to);
       if(!isPlain(A) || !isPlain(B) || phaseOf(A) !== phaseOf(B)) return;
+      if(backLinks.has(e.from + '' + e.to)) return;
       fwd.get(e.from).push(e.to);
     });
     const reachMemo = new Map();
@@ -527,24 +560,6 @@ function computeLayout(state){
         const p = nodePos.get(n.id);
         return p && p.flow === flow && p.cross === cross;
       });
-    // 循環している経路は「戻りの1本」だけ押し下げの対象外にする。
-    // 循環に関わる線を全部よけると順序が決まらず、入口のノード(n18)が
-    // 出口のノード(n20)より後ろに置かれたままになる。戻りの1本だけ外せば
-    // 残りは前→後ろに押し下げられ、押し合って下がり続けることもない。
-    const plainIds = new Set(state.nodes.filter(isPlain).map(n=> n.id));
-    const samePhaseLinks = state.links.filter(e=>{
-      const A = nodeById.get(e.from), B = nodeById.get(e.to);
-      return isPlain(A) && isPlain(B) && phaseOf(A) === phaseOf(B);
-    });
-    const backLinks = findBackEdges(
-      plainIds, samePhaseLinks,
-      (id)=> nodeOrder.has(id) ? nodeOrder.get(id) : 0,
-      // 別フェーズや●から入ってくるノードは、そのかたまりの入口とみなす
-      (id)=> state.links.some(e=>{
-        const A = nodeById.get(e.from);
-        return e.to === id && e.from !== id && (!isPlain(A) || phaseOf(A) !== phaseOf(nodeById.get(id)));
-      }),
-    );
     const cyclic = new Set();
     state.links.forEach((e, li)=>{
       if(backLinks.has(e.from + '' + e.to)) cyclic.add(li);
@@ -670,7 +685,10 @@ function computeLayout(state){
   const phaseBands = [];
   let main = mainStart;
   phases.forEach((p, j)=>{
-    const size = phaseRuns[j] * nodeMain + (phaseRuns[j] - 1) * phaseGap[j];
+    let size = phaseRuns[j] * nodeMain + (phaseRuns[j] - 1) * phaseGap[j];
+    // LRではフェーズ名が上の細い帯（高さ38px固定）に横書きで入る。縦には広げられないので、
+    // 名前が帯より長いときは帯の長さ（流れ方向）を広げる。広げないとはみ出して切れる。
+    if(hasPhaseHeader && dir === 'LR') size = Math.max(size, headerTextWidth(p.label, 12) + 16);
     phaseBands.push({ phase:p, index:j, start:main, size });
     main += size + gapAfter[j];
   });
@@ -679,7 +697,10 @@ function computeLayout(state){
   const laneBands = [];
   let cross = crossStart;
   lanes.forEach((l, i)=>{
-    const size = laneRuns[i] * nodeCross + (laneRuns[i] + 1) * L.gapCross;
+    let size = laneRuns[i] * nodeCross + (laneRuns[i] + 1) * L.gapCross;
+    // TBではレーン名が上の細い帯（高さ38px固定）に横書きで入る。フェーズ名と同じ理由で、
+    // 名前が帯より長いときはレーンの厚みを広げる。
+    if(dir === 'TB') size = Math.max(size, headerTextWidth(l.label, 12.5) + 16);
     laneBands.push({ lane:l, index:i, start:cross, size });
     cross += size;
   });
@@ -818,6 +839,10 @@ function computeLayout(state){
       let s = lo[j] - 6, e = hi[j] + 6;
       if(prevEnd != null) s = Math.max(s, (prevEnd + lo[j]) / 2);  // 直前とは中間で分ける
       if(j === 0) s = Math.max(headerMain, s);
+      // LRではフェーズ名が上の細い帯（高さ38px固定）に横書きで入る。ノードの位置ぴったりに
+      // 詰めると名前がはみ出して切れるので、名前に要る長さは残す。
+      // 帯どうしの間隔は上で名前のぶんを見込んで取ってあるので、ここで広げても隣とぶつからない。
+      if(hasPhaseHeader && dir === 'LR') e = Math.max(e, s + headerTextWidth(p.label, 12) + 16);
       phaseBands[j].start = s;
       phaseBands[j].size = Math.max(0, e - s);
       prevEnd = e;
@@ -863,13 +888,15 @@ function shapeElement(b, shape, fill){
 
 /* 折れ線で結ぶ。前後関係（流れ方向）に応じて経路を変える。
    jogIdx: 他の線と重なったときに少しずつ経路をずらすための試行回数（0始まり）。
-   ctx.allowFarTo: 後退エッジで TO の右(TB)/下(LR) から入ってよいか
-     （FROMのレーンがTOより後ろ＝右/下にある、またはTOへの入次数が3本以上のときだけ true）。 */
+   ctx.allowCrossIn: 横の出力辺（TB=右 / LR=下）から入ってよいか
+     （要求5の例外。TO側に出力が1本も無いときだけ true）。 */
 function linkPath(a, b, dir, jogIdx, ctx){
   const ac = { x:a.x + a.w/2, y:a.y + a.h/2 };
   const bc = { x:b.x + b.w/2, y:b.y + b.h/2 };
   const jog = (jogIdx || 0) * 8;
-  const allowFarTo = !!(ctx && ctx.allowFarTo);
+  const allowCrossIn = !!(ctx && ctx.allowCrossIn);
+  // 線はどれも辺の中央から出す。同じ点から2本出てしまった場合だけ、
+  // 描画側（spreadRoot）が根元を辺に沿ってずらす。
   if(dir === 'LR'){
     // 別レーンをまたぐ接続（前進・後退どちらも）は、レーンとレーンの間の隙間
     // （ノードが絶対に無い帯）を通って短く行き来する。同じ列（同フェーズ）はこの後で個別に扱う。
@@ -884,11 +911,26 @@ function linkPath(a, b, dir, jogIdx, ctx){
         const d = `M ${sx} ${ac.y} H ${nearX} V ${gy} H ${clearX} V ${bc.y} H ${b.x}`;
         return { d, tip:{ x:b.x, y:bc.y, dirn:'right' }, mid:{ x:clearX, y:(gy + bc.y)/2 } };
       }
-      // 後退・横移動: FROMは隙間側の辺（上/下どちらでもよい）から出て、TOへは常に左辺から入る（要求2に整合）。
-      const exitBottom = gy > ac.y;
-      const exitY = exitBottom ? a.y + a.h : a.y;
-      const d = `M ${ac.x} ${exitY} V ${gy} H ${clearX} V ${bc.y} H ${b.x}`;
-      return { d, tip:{ x:b.x, y:bc.y, dirn:'right' }, mid:{ x:clearX, y:(exitY + gy)/2 } };
+      // 後退・横移動: TOの横の出力辺(下)を出力が使っていなければ、外側(下)を回ってそこへ入れる。
+      // レーンの隙間を通すと、同じ所から出る前進の線と根元が重なりやすいため（要求5の例外）。
+      if(allowCrossIn){
+        const back = Math.max(a.y + a.h, b.y + b.h) + 22 + jog;
+        // ラベルは長い横棒の真ん中ではなくFROMのすぐ下に置く。真ん中だと、
+        // 同じあたりを通る別の線のラベルと見分けがつかなくなるため。
+        return { d:`M ${ac.x} ${a.y + a.h} V ${back} H ${bc.x} V ${b.y + b.h}`,
+                 tip:{ x:bc.x, y:b.y + b.h, dirn:'up' },
+                 mid:{ x:ac.x, y:Math.min(a.y + a.h + 26, back) } };
+      }
+      // そうでなければ出力は右/下だけから出す（要求5）。TOのレーンが下なら下辺、上なら右辺から出て、
+      // TOへは常に左辺から入る（要求2に整合）。
+      if(gy > ac.y){
+        const sy = a.y + a.h;
+        const d = `M ${ac.x} ${sy} V ${gy} H ${clearX} V ${bc.y} H ${b.x}`;
+        return { d, tip:{ x:b.x, y:bc.y, dirn:'right' }, mid:{ x:clearX, y:(gy + bc.y)/2 } };
+      }
+      const sideX = a.x + a.w + 14 + jog;
+      const d = `M ${a.x + a.w} ${ac.y} H ${sideX} V ${gy} H ${clearX} V ${bc.y} H ${b.x}`;
+      return { d, tip:{ x:b.x, y:bc.y, dirn:'right' }, mid:{ x:clearX, y:(gy + bc.y)/2 } };
     }
     if(b.x > a.x + a.w - 1){                    // 前進（同じレーン）
       const sx = a.x + a.w, ex = b.x;
@@ -902,16 +944,19 @@ function linkPath(a, b, dir, jogIdx, ctx){
         const sy = a.y + a.h, ey = b.y;
         return { d:`M ${ac.x} ${sy} V ${ey}`, tip:{ x:ac.x, y:ey, dirn:'down' }, mid:{ x:ac.x, y:(sy + ey)/2 } };
       }
-      // 上のレーンへ戻る: 上（相手の側）へ出て左を回し、TOの左辺へ入れる（下辺から入れない。要求2）
-      const leftX = Math.min(a.x, b.x) - 22 - jog;
-      return { d:`M ${ac.x} ${a.y} V ${a.y - 18} H ${leftX} V ${bc.y} H ${b.x}`, tip:{ x:b.x, y:bc.y, dirn:'right' },
-               mid:{ x:leftX, y:(ac.y + bc.y)/2 } };
+      // 上のレーンへ戻る: 出口は右辺（前進の出力辺）。列の右の余白を上がり、TOの上辺へ入れる（要求5）
+      const escX = a.x + a.w + 18 + jog;
+      const topY = b.y - 22 - jog;
+      return { d:`M ${a.x + a.w} ${ac.y} H ${escX} V ${topY} H ${bc.x} V ${b.y}`, tip:{ x:bc.x, y:b.y, dirn:'down' },
+               mid:{ x:(escX + bc.x)/2, y:topY } };
     }
     // 後退（差戻しなど、同じレーン）
-    if(allowFarTo){                             // FROMがTOより下のレーン、または3本以上入る: 下側を回り込みTOの下辺へ
+    if(allowCrossIn){                           // TOの下辺が空いていれば: 下側を回り込みそこへ入れる（要求5の例外）
       const back = Math.max(a.y + a.h, b.y + b.h) + 22 + jog;
+      // ラベルはFROMのすぐ下に置く（長い横棒の真ん中だと、どの線のラベルか分からなくなる）
       return { d:`M ${ac.x} ${a.y + a.h} V ${back} H ${bc.x} V ${b.y + b.h}`,
-               tip:{ x:bc.x, y:b.y + b.h, dirn:'up' }, mid:{ x:(ac.x + bc.x)/2, y:back } };
+               tip:{ x:bc.x, y:b.y + b.h, dirn:'up' },
+               mid:{ x:ac.x, y:Math.min(a.y + a.h + 26, back) } };
     }
     // それ以外: TOの下は使わず、上へ回り込んでTOの上辺へ入れる
     // nearY/topY も少しずつずらせるようにし、同じ相手へ戻る複数の線が完全に重ならないようにする
@@ -935,11 +980,25 @@ function linkPath(a, b, dir, jogIdx, ctx){
       const d = `M ${ac.x} ${sy} V ${nearY} H ${gx} V ${clearY} H ${bc.x} V ${b.y}`;
       return { d, tip:{ x:bc.x, y:b.y, dirn:'down' }, mid:{ x:gx, y:(clearY + b.y)/2 } };
     }
-    // 後退・横移動: FROMは隙間側の辺（右/左どちらでもよい）から出て、TOへは常に上辺から入る（要求2に整合）。
-    const exitRight = gx > ac.x;
-    const exitX = exitRight ? a.x + a.w : a.x;
-    const d = `M ${exitX} ${ac.y} H ${gx} V ${clearY} H ${bc.x} V ${b.y}`;
-    return { d, tip:{ x:bc.x, y:b.y, dirn:'down' }, mid:{ x:gx, y:(ac.y + clearY)/2 } };
+    // 後退・横移動: TOの横の出力辺(右)を出力が使っていなければ、外側(右)を回ってそこへ入れる。
+    // レーンの隙間を通すと、同じ所から出る前進の線と根元が重なりやすいため（要求5の例外）。
+    if(allowCrossIn){
+      const back = Math.max(a.x + a.w, b.x + b.w) + 22 + jog;
+      // ラベルは長い縦棒の真ん中ではなくFROMのすぐ右に置く。真ん中だと、
+      // 同じあたりを通る別の線のラベルと見分けがつかなくなるため。
+      return { d:`M ${a.x + a.w} ${ac.y} H ${back} V ${bc.y} H ${b.x + b.w}`,
+               tip:{ x:b.x + b.w, y:bc.y, dirn:'left' },
+               mid:{ x:Math.min(a.x + a.w + 26, back), y:ac.y } };
+    }
+    // そうでなければ出力は右/下だけから出す（要求5）。TOのレーンが右なら右辺、左なら下辺から出て、
+    // TOへは常に上辺から入る（要求2に整合）。
+    if(gx > ac.x){
+      const d = `M ${a.x + a.w} ${ac.y} H ${gx} V ${clearY} H ${bc.x} V ${b.y}`;
+      return { d, tip:{ x:bc.x, y:b.y, dirn:'down' }, mid:{ x:gx, y:(ac.y + clearY)/2 } };
+    }
+    const sideY = a.y + a.h + 14 + jog;
+    const d = `M ${ac.x} ${a.y + a.h} V ${sideY} H ${gx} V ${clearY} H ${bc.x} V ${b.y}`;
+    return { d, tip:{ x:bc.x, y:b.y, dirn:'down' }, mid:{ x:gx, y:(sideY + clearY)/2 } };
   }
   if(b.y > a.y + a.h - 1){                      // 前進（同じレーン）
     const sy = a.y + a.h, ey = b.y;
@@ -953,16 +1012,19 @@ function linkPath(a, b, dir, jogIdx, ctx){
       const sx = a.x + a.w, ex = b.x;
       return { d:`M ${sx} ${ac.y} H ${ex}`, tip:{ x:ex, y:ac.y, dirn:'right' }, mid:{ x:(sx + ex)/2, y:ac.y } };
     }
-    // 左のレーンへ戻る: 左（相手の側）へ出て上を回し、TOの上辺へ入れる（右辺から入れない。要求2）
-    const topY = Math.min(a.y, b.y) - 22 - jog;
-    return { d:`M ${a.x} ${ac.y} H ${a.x - 18} V ${topY} H ${bc.x} V ${b.y}`, tip:{ x:bc.x, y:b.y, dirn:'down' },
-             mid:{ x:(a.x - 18 + bc.x)/2, y:topY } };
+    // 左のレーンへ戻る: 出口は下辺（前進の出力辺）。行の下の余白を左へ回り、TOの左辺へ入れる（要求5）
+    const escY = a.y + a.h + 18 + jog;
+    const leftX = b.x - 22 - jog;
+    return { d:`M ${ac.x} ${a.y + a.h} V ${escY} H ${leftX} V ${bc.y} H ${b.x}`, tip:{ x:b.x, y:bc.y, dirn:'right' },
+             mid:{ x:leftX, y:(escY + bc.y)/2 } };
   }
   // 後退（差戻しなど、同じレーン）
-  if(allowFarTo){                               // FROMがTOより右のレーン、または3本以上入る: 右側を回り込みTOの右辺へ
+  if(allowCrossIn){                             // TOの右辺が空いていれば: 右側を回り込みそこへ入れる（要求5の例外）
     const back = Math.max(a.x + a.w, b.x + b.w) + 22 + jog;
+    // ラベルはFROMのすぐ右に置く（長い縦棒の真ん中だと、どの線のラベルか分からなくなる）
     return { d:`M ${a.x + a.w} ${ac.y} H ${back} V ${bc.y} H ${b.x + b.w}`,
-             tip:{ x:b.x + b.w, y:bc.y, dirn:'left' }, mid:{ x:back, y:(ac.y + bc.y)/2 } };
+             tip:{ x:b.x + b.w, y:bc.y, dirn:'left' },
+             mid:{ x:Math.min(a.x + a.w + 26, back), y:ac.y } };
   }
   // それ以外: TOの右は使わず、左へ回り込んでTOの左辺へ入れる
   // nearX/topY も少しずつずらせるようにし、同じ相手へ戻る複数の線が完全に重ならないようにする
@@ -988,7 +1050,7 @@ function arrowHead(tip){
 /* ---- エッジ経路の補助（分岐の角出し・ノード回避） ---- */
 /* 直交線分(水平/垂直)が矩形を貫くか。端で触れる程度は許容し、明確に貫くものだけ true。 */
 function segHitsBox(x1, y1, x2, y2, box){
-  const m = 2, bx0 = box.x + m, bx1 = box.x + box.w - m, by0 = box.y + m, by1 = box.y + box.h - m;
+  const m = 1, bx0 = box.x + m, bx1 = box.x + box.w - m, by0 = box.y + m, by1 = box.y + box.h - m;
   if(x1 === x2){
     if(x1 <= bx0 || x1 >= bx1) return false;
     const lo = Math.min(y1, y2), hi = Math.max(y1, y2);
@@ -1013,20 +1075,26 @@ function pathHitsBoxes(d, boxes){
   }
   return false;
 }
-/* 分岐(ひし形)の指定した角から線を出す経路（要求4）。jogIdx で他の線との重なりを少しずらす。 */
-function cornerRoute(a, b, dir, corner, jogIdx){
+/* 分岐(ひし形)の指定した出口ポートから線を出す経路（要求4/5）。
+   port = { side, at }。side は TB なら 'bottom'|'right'|'left'、LR なら 'right'|'bottom'|'top'。
+   at は流れ方向の出力辺（TB=下 / LR=右）に複数ポートを置くときの、辺上の座標。
+   jogIdx で他の線との重なりを少しずらす。 */
+function cornerRoute(a, b, dir, port, jogIdx){
   const jog = (jogIdx || 0) * 6;
   const acx = a.x + a.w/2, acy = a.y + a.h/2, bcx = b.x + b.w/2, bcy = b.y + b.h/2;
+  const side = port && port.side;
   if(dir === 'TB'){
-    if(corner === 'bottom'){
+    if(side === 'bottom'){
+      const sx = port.at != null ? port.at : acx;
       const sy = a.y + a.h, ey = b.y;
       const span = ey - sy;
       const my = span > 24 ? Math.min(Math.max((sy + ey) / 2 + jog, sy + 6), ey - 6) : (sy + ey) / 2;
-      return { d:`M ${acx} ${sy} V ${my} H ${bcx} V ${ey}`, tip:{ x:bcx, y:ey, dirn:'down' }, mid:{ x:(acx+bcx)/2, y:my } };
+      return { d:`M ${sx} ${sy} V ${my} H ${bcx} V ${ey}`, tip:{ x:bcx, y:ey, dirn:'down' }, mid:{ x:(sx+bcx)/2, y:my } };
     }
-    // 左右の角: 横へ出てから相手の上辺へ入れる（TOは上から接続）。
+    // 左右の辺: 横へ出てから相手の上辺へ入れる（TOは上から接続）。
+    // 左辺は入力専用だが、戻りの入力が無い分岐に限り出力に使う（要求5の例外）。
     // 相手が明確に横にあれば まっすぐ横→下。真下寄りなら 横のチャネルを下ってから中心へ戻る。
-    const right = corner === 'right';
+    const right = side === 'right';
     const sx = right ? a.x + a.w : a.x;
     const offset = right ? (bcx - acx) : (acx - bcx);
     if(offset > a.w / 2){
@@ -1035,14 +1103,16 @@ function cornerRoute(a, b, dir, corner, jogIdx){
     const chx = right ? sx + 18 + jog : sx - 18 - jog;
     return { d:`M ${sx} ${acy} H ${chx} V ${b.y - 12} H ${bcx} V ${b.y}`, tip:{ x:bcx, y:b.y, dirn:'down' }, mid:{ x:chx, y:(acy + b.y)/2 } };
   }
-  if(corner === 'right'){          // LR の前進はまっすぐ右へ（TOの左辺へ入る）
+  if(side === 'right'){            // LR の前進はまっすぐ右へ（TOの左辺へ入る）
+    const sy = port.at != null ? port.at : acy;
     const sx = a.x + a.w, ex = b.x;
     const span = ex - sx;
     const mx = span > 24 ? Math.min(Math.max((sx + ex) / 2 + jog, sx + 6), ex - 6) : (sx + ex) / 2;
-    return { d:`M ${sx} ${acy} H ${mx} V ${bcy} H ${ex}`, tip:{ x:ex, y:bcy, dirn:'right' }, mid:{ x:mx, y:(acy+bcy)/2 } };
+    return { d:`M ${sx} ${sy} H ${mx} V ${bcy} H ${ex}`, tip:{ x:ex, y:bcy, dirn:'right' }, mid:{ x:mx, y:(sy+bcy)/2 } };
   }
-  // 上下の角(LR): 縦へ出てから相手の左辺へ入れる（TOは左から接続）。
-  const bottom = corner === 'bottom';
+  // 上下の辺(LR): 縦へ出てから相手の左辺へ入れる（TOは左から接続）。
+  // 上辺は入力専用だが、戻りの入力が無い分岐に限り出力に使う（要求5の例外）。
+  const bottom = side === 'bottom';
   const sy = bottom ? a.y + a.h : a.y;
   const offset = bottom ? (bcy - acy) : (acy - bcy);
   if(offset > a.h / 2){
@@ -1052,42 +1122,56 @@ function cornerRoute(a, b, dir, corner, jogIdx){
   return { d:`M ${acx} ${sy} V ${chy} H ${b.x - 12} V ${bcy} H ${b.x}`, tip:{ x:b.x, y:bcy, dirn:'right' }, mid:{ x:(acx + b.x)/2, y:chy } };
 }
 /* ノードを貫く経路を、横のチャネルに逃がして迂回する（要求3）。避けられなければ null。
-   ctx.allowFarTo が偽なら、TOの右(TB)/下(LR)から入る側の経路は最後の手段としてのみ試す。 */
+   ctx.allowCrossIn が偽なら、TOの右(TB)/下(LR)から入る経路は使わない（要求5）。 */
 function detourRoute(a, b, dir, boxes, jogIdx, ctx){
   const idx = jogIdx || 0;
   const pad = 20 + idx * 8;
-  const allowFarTo = !!(ctx && ctx.allowFarTo);
+  const allowCrossIn = !!(ctx && ctx.allowCrossIn);
   if(dir === 'TB'){
-    // 出口をFROMの中心から少しずらす。他の辺（分岐の下角出しなど）と同じ点から出て
-    // 重なるのを防ぐため、やり直すたびに逆向き・大きめに振る。
-    const nudge = idx ? Math.min(a.w/2 - 12, Math.ceil(idx/2) * 10) * (idx % 2 ? 1 : -1) : 0;
-    const acx = a.x + a.w/2 + nudge, bcx = b.x + b.w/2, bcy = b.y + b.h/2;
+    const acx = a.x + a.w/2, bcx = b.x + b.w/2, bcy = b.y + b.h/2;
     // band: 出口の高さ〜TOの高さの間（前進・後退どちらでも成り立つよう min/max で範囲を取る）
     const sy = a.y + a.h;
     const yLo = Math.min(sy, b.y), yHi = Math.max(sy, b.y);
     const band = boxes.filter(o=> o.y < yHi && o.y + o.h > yLo);
     const rx = Math.max(a.x + a.w, b.x + b.w, ...band.map(o=> o.x + o.w)) + pad;
     const lx = Math.min(a.x, b.x, ...band.map(o=> o.x)) - pad;
-    const order = allowFarTo ? [rx, lx] : [lx, rx];
-    // 同じ高さから出る他の辺と退避行が重なるのを避けるため、退避の高さも試行ごとにずらす
-    const escY = sy + 14 + idx * 10;
+    const order = allowCrossIn ? [rx, lx] : [lx];
+    // 同じ高さから出る他の辺と退避行が重なるのを避けるため、退避の高さも試行ごとにずらす。
+    // ただし退避する行がノードの中へ入らないよう、手前のノードの上で止める。
+    // ふちから数pxだけ内側を通ると、線がノードに重なって見えてしまうため。
+    let escY = sy + 14 + idx * 10;
+    {
+      const blockers = boxes.filter(o=> o.y + o.h > sy && o.y < escY + 8);
+      if(blockers.length){
+        const top = Math.min(...blockers.map(o=> o.y));
+        if(top - 8 > sy) escY = Math.min(escY, top - 8);
+      }
+    }
     for(const chx of order){
       const enterR = chx > bcx, ex = enterR ? b.x + b.w : b.x;
       const d = `M ${acx} ${sy} V ${escY} H ${chx} V ${bcy} H ${ex}`;
       if(!pathHitsBoxes(d, boxes)) return { d, tip:{ x:ex, y:bcy, dirn: enterR ? 'left' : 'right' }, mid:{ x:chx, y:(sy + bcy)/2 } };
     }
   }else{
-    const nudge = idx ? Math.min(a.h/2 - 12, Math.ceil(idx/2) * 10) * (idx % 2 ? 1 : -1) : 0;
-    const acy = a.y + a.h/2 + nudge, bcx = b.x + b.w/2, bcy = b.y + b.h/2;
+    const acy = a.y + a.h/2, bcx = b.x + b.w/2, bcy = b.y + b.h/2;
     // band: 出口の位置〜TOの位置の間（前進・後退どちらでも成り立つよう min/max で範囲を取る）
     const sx = a.x + a.w;
     const xLo = Math.min(sx, b.x), xHi = Math.max(sx, b.x);
     const band = boxes.filter(o=> o.x < xHi && o.x + o.w > xLo);
     const by = Math.max(a.y + a.h, b.y + b.h, ...band.map(o=> o.y + o.h)) + pad;
     const ty = Math.min(a.y, b.y, ...band.map(o=> o.y)) - pad;
-    const order = allowFarTo ? [by, ty] : [ty, by];
-    // 同じ位置から出る他の辺と退避列が重なるのを避けるため、退避の位置も試行ごとにずらす
-    const escX = sx + 14 + idx * 10;
+    const order = allowCrossIn ? [by, ty] : [ty];
+    // 同じ位置から出る他の辺と退避列が重なるのを避けるため、退避の位置も試行ごとにずらす。
+    // ただし退避する列がノードの中へ入らないよう、手前のノードの左で止める。
+    // ふちから数pxだけ内側を通ると、線がノードに重なって見えてしまうため。
+    let escX = sx + 14 + idx * 10;
+    {
+      const blockers = boxes.filter(o=> o.x + o.w > sx && o.x < escX + 8);
+      if(blockers.length){
+        const left = Math.min(...blockers.map(o=> o.x));
+        if(left - 8 > sx) escX = Math.min(escX, left - 8);
+      }
+    }
     for(const chy of order){
       const enterB = chy > bcy, ey = enterB ? b.y + b.h : b.y;
       const d = `M ${sx} ${acy} H ${escX} V ${chy} H ${bcx} V ${ey}`;
@@ -1095,6 +1179,50 @@ function detourRoute(a, b, dir, boxes, jogIdx, ctx){
     }
   }
   return null;
+}
+/* 同じノードの同じ辺から2本以上の線が出るとき、根元を辺に沿って等間隔に並べ直す（要求5）。
+   経路の形は変えず、出発点とそれに続く1区間だけが動く。
+   並べる順はその線が曲がっていく側の順なので、「右へ折れる線は右寄りから」出て、
+   どの線がどこへ行くのか追いやすくなる。
+   1本しか出ていない辺はそのまま。中央から出るべき線が偏らないよう、ここでは動かさない。 */
+function spreadRoots(items, boxById){
+  const groups = new Map();   // "ノードid + 辺" -> その辺から出る線
+  items.forEach(it=>{
+    if(!it || !it.p) return;
+    const box = boxById.get(it.e.from);
+    if(!box) return;
+    const t = it.p.d.split(/\s+/);
+    if(t[0] !== 'M') return;
+    const x = +t[1], y = +t[2];
+    const vertical = t[3] === 'V';   // 最初の区間が縦＝上下の辺から出ている
+    const edge = vertical
+      ? (Math.abs(y - box.y) < 1.5 ? 'top' : 'bottom')
+      : (Math.abs(x - box.x) < 1.5 ? 'left' : 'right');
+    // 最初に曲がる先。これが「その線が向かう側」で、根元を並べる順になる
+    let toward = null;
+    for(let i = 3; i < t.length; i += 2){
+      if(vertical && t[i] === 'H'){ toward = +t[i + 1]; break; }
+      if(!vertical && t[i] === 'V'){ toward = +t[i + 1]; break; }
+    }
+    const k = it.e.from + '\u001f' + edge;
+    if(!groups.has(k)) groups.set(k, []);
+    groups.get(k).push({ it, t, box, vertical, toward: toward == null ? (vertical ? x : y) : toward });
+  });
+  groups.forEach(list=>{
+    if(list.length < 2) return;      // 1本だけの辺は中央のまま
+    list.sort((p, q)=> p.toward - q.toward);
+    const box = list[0].box, vertical = list[0].vertical;
+    const span = vertical ? box.w : box.h;
+    const step = Math.round(Math.min(24, Math.max(8, (span - 24) / list.length)) * 2) / 2;
+    list.forEach((r, k)=>{
+      const off = (k - (list.length - 1) / 2) * step;
+      if(!off) return;
+      const nt = r.t.slice();
+      if(r.vertical) nt[1] = String(+nt[1] + off);
+      else nt[2] = String(+nt[2] + off);
+      r.it.p = { d: nt.join(' '), tip: r.it.p.tip, mid: r.it.p.mid };
+    });
+  });
 }
 /* 経路(d)を線分の配列に分解する。重なり検出に使う。 */
 function pathSegmentsOf(d){
@@ -1109,16 +1237,18 @@ function pathSegmentsOf(d){
   }
   return segs;
 }
-/* 2つの線分が同一直線上で重なる長さ（重ならない・平行でなければ0）。 */
-function collinearOverlapLen(s1, s2){
+/* 2つの線分が同じ向きで、ほぼ同じ位置（tol以内）に並んでいる長さ。平行でなければ0。
+   ぴったり重なっていなくても数pxしか離れていなければ1本に見えるので、少し幅を持たせて見る。 */
+function collinearOverlapLen(s1, s2, tol){
+  const t = tol || 0;
   const [a1,b1,a2,b2] = s1, [c1,d1,c2,d2] = s2;
   const v1 = a1 === a2, v2 = c1 === c2;
-  if(v1 && v2 && a1 === c1){
+  if(v1 && v2 && Math.abs(a1 - c1) <= t){
     const lo = Math.max(Math.min(b1,b2), Math.min(d1,d2));
     const hi = Math.min(Math.max(b1,b2), Math.max(d1,d2));
     return Math.max(0, hi - lo);
   }
-  if(!v1 && !v2 && b1 === d1){
+  if(!v1 && !v2 && Math.abs(b1 - d1) <= t){
     const lo = Math.max(Math.min(a1,a2), Math.min(c1,c2));
     const hi = Math.min(Math.max(a1,a2), Math.max(c1,c2));
     return Math.max(0, hi - lo);
@@ -1158,8 +1288,10 @@ function drawSvg(state){
   const pad = 14;
   const titleH = state.title ? 34 : 0;
 
-  // 分岐(ひし形)の出力を別々の角から出す（要求4）。前進する出力が2〜3本のときだけ割り当てる。
-  const cornerMap = new Map();   // link index -> 角
+  // 分岐(ひし形)の出力を別々のポートから出す（要求4/5）。前進する出力が2〜4本のときに割り当てる。
+  // ポートは「行き先の交差方向の並び順」と同じ順に並べる。根元の順と行き先の順がねじれると、
+  // 分岐を出てすぐの所で線どうしが無駄に交差するため。
+  const portMap = new Map();   // link index -> { side, at }
   {
     const bySrc = new Map();
     state.links.forEach((e, i)=>{
@@ -1170,23 +1302,43 @@ function drawSvg(state){
       if(!bySrc.has(e.from)) bySrc.set(e.from, []);
       bySrc.get(e.from).push({ i, a, b });
     });
-    const CORN = lay.dir === 'TB' ? ['bottom', 'right', 'left'] : ['right', 'bottom', 'top'];
-    bySrc.forEach(list=>{
-      if(list.length < 2 || list.length > 3) return;   // 3つ以内のときだけ角出し（4つ以上は既定のまま）
+    // 戻り（前進でない入力）があるノードは、横の入力辺（TB=左 / LR=上）をその入力のために空けておく。
+    const hasBackIn = (id)=> state.links.some(e=>{
+      if(e.to !== id || e.from === id) return false;
+      const a = lay.boxById.get(e.from), b = lay.boxById.get(id);
+      if(!a || !b) return false;
+      return lay.dir === 'TB' ? !(b.y > a.y + a.h - 1) : !(b.x > a.x + a.w - 1);
+    });
+    const FAR   = lay.dir === 'TB' ? 'left'   : 'top';     // 入力辺。例外的に出力へ回すことがある
+    const FWD   = lay.dir === 'TB' ? 'bottom' : 'right';   // 流れ方向の出力辺（複数ポートを置ける）
+    const CROSS = lay.dir === 'TB' ? 'right'  : 'bottom';  // 横の出力辺
+    bySrc.forEach((list, srcId)=>{
+      if(list.length < 2 || list.length > 4) return;   // 4本までポート割り当て（5本以上は既定のまま）
       list.sort((p, q)=>{
-        const pf = lay.dir === 'TB' ? p.b.y : p.b.x, qf = lay.dir === 'TB' ? q.b.y : q.b.x;
-        if(pf !== qf) return pf - qf;
         const pc = lay.dir === 'TB' ? p.b.x : p.b.y, qc = lay.dir === 'TB' ? q.b.x : q.b.y;
-        return pc - qc;
+        if(pc !== qc) return pc - qc;
+        const pf = lay.dir === 'TB' ? p.b.y : p.b.x, qf = lay.dir === 'TB' ? q.b.y : q.b.x;
+        return pf - qf;
       });
-      list.forEach((it, k)=> cornerMap.set(it.i, CORN[k]));
+      const a = list[0].a;
+      const ports = [];
+      // 3本以上で、戻りの入力が無いときだけ入力辺も出口に使う（要求5の例外）
+      if(list.length >= 3 && !hasBackIn(srcId)) ports.push({ side: FAR });
+      const mid = list.length - ports.length - 1;
+      for(let k = 0; k < mid; k++){
+        const t = (k + 1) / (mid + 1);
+        ports.push({ side: FWD, at: lay.dir === 'TB' ? a.x + a.w * t : a.y + a.h * t });
+      }
+      ports.push({ side: CROSS });
+      list.forEach((it, k)=> portMap.set(it.i, ports[k]));
     });
   }
 
-  // FROM/TOの辺ルール判定用: レーンの前後関係と、ノードごとの出次数・入次数
-  // ・TB: TOの右から入るのは「FROMのレーンがTOより右」または「TOへの入次数が3本以上」のときだけ許可
-  // ・LR: TOの下から入るのは「FROMのレーンがTOより下」または「TOへの入次数が3本以上」のときだけ許可
-  // ・同じレーン内で下から戻る（差戻しなど）場合も、TO右/下から入ってよいとする（FROMが下＝同じレーン）
+  // FROM/TOの辺ルール（要求5）判定用。辺の役割は向き(LR/TB)によらず固定する。
+  // ・出力（線の棒側）は 右 / 下 からだけ出す
+  // ・入力（矢印の先側）は 左 / 上 へだけ入れる
+  // ・例外: TO側に出力が1本も無いときだけ、横の出力辺（TB=右 / LR=下）からの入力を許す
+  //   （終了ノードなど。出力が無ければ、同じ点に線の棒と矢先が重なることはない）
   const laneIdxOf = new Map(lay.lanes.map((l, idx)=> [l.id, idx]));
   // ●(開始/終了)は接続先ノードの隣に実際には描かれるため、経路判定でも自身の宣言レーンではなく
   // 接続先(anchor)のレーンを使う。手書きの.swimや編集操作で●のlaneが接続先とズレていても、
@@ -1198,18 +1350,16 @@ function drawSvg(state){
     }
     return n.laneId || (lay.lanes[0] && lay.lanes[0].id);
   };
-  const inCount = new Map();
-  state.links.forEach(e=> inCount.set(e.to, (inCount.get(e.to) || 0) + 1));
-
   // 接続の経路をすべて先に確定する（重なりを検出したら少しずつずらす。
   // 要求: 交差は許容するが線の完全な重なりは避ける）。キャンバスサイズを決める前に必要。
+  const buildRoutes = (allowCrossInOf)=>{
   const placedSegs = [];
-  const linkRenders = state.links.map((e, i)=>{
+  return state.links.map((e, i)=>{
     const a = lay.boxById.get(e.from), b = lay.boxById.get(e.to);
     if(!a || !b) return null;
-    const corner = cornerMap.get(i);
+    const port = portMap.get(i);
     const laneA = laneIdxOf.get(resolveLane(a.node)), laneB = laneIdxOf.get(resolveLane(b.node));
-    const allowFarTo = (laneA != null && laneB != null && laneA >= laneB) || (inCount.get(e.to) || 0) >= 3;
+    const allowCrossIn = allowCrossInOf(e.to);
     // 別レーンをまたぐ接続用: レーン境界のすぐ内側（ノード列と境界線の間の余白）のクロス軸座標。
     // レーン帯どうしは隙間なく隣接している（境界＝線そのもの）ため、境界線上を通ると
     // レーンの区切り線と重なって見える。境界からノード列側へ少し入った余白の中央を使う。
@@ -1222,29 +1372,54 @@ function drawSvg(state){
         gapCross = bandA.start + LAYOUT.gapCross / 2;
       }
     }
-    const ctx = { allowFarTo, gapCross };
+    const ctx = { allowCrossIn, gapCross };
     const obst = lay.boxes.filter(x=> x.node.id !== e.from && x.node.id !== e.to);
     // 各試行を「貫通なし」を最優先、「線の重なりなし」を次点にスコアリングして最良のものを採用する。
     // 単に重なりが無いことだけを基準にすると、貫通しているのにたまたま他の線と重ならない
     // 経路を選んでしまうことがあるため（要求3が要求4より優先）。
-    let best = null, bestScore = -1, bestMid = null;
+    let best = null, bestScore = -1;
     for(let attempt = 0; attempt < 6 && bestScore < 3; attempt++){
-      let p = corner ? cornerRoute(a, b, lay.dir, corner, attempt) : linkPath(a, b, lay.dir, attempt, ctx);
+      let p = port ? cornerRoute(a, b, lay.dir, port, attempt) : linkPath(a, b, lay.dir, attempt, ctx);
       // 要求3: ノードを貫くなら、チャネルへ逃がして迂回する
       if(pathHitsBoxes(p.d, obst)){
         const dp = detourRoute(a, b, lay.dir, obst, attempt, ctx);
         if(dp) p = dp;
       }
       const stillHits = pathHitsBoxes(p.d, obst);
-      // 最後の区間（TOへ入る直前）は複数の矢印が同じ点に収束するのが普通なので、重なり判定から除く
-      const midSegs = pathSegmentsOf(p.d).slice(0, -1);
-      const hasOverlap = midSegs.some(s1=> placedSegs.some(s2=> collinearOverlapLen(s1, s2) > 8));
+      // 重なり判定からは前後1区間ずつ外す。
+      // 最初の区間（根元）は、重なっていれば spreadRoot が後で辺に沿ってずらすので数えない。
+      // ここで数えると、本当に離したい途中の区間を見つける前に点数が頭打ちになってしまう。
+      // 最後の区間（TOへ入る直前）は、複数の矢印が同じ点に収束するのが普通なので数えない。
+      const midSegs = pathSegmentsOf(p.d).slice(1, -1);
+      const hasOverlap = midSegs.some(s1=> placedSegs.some(s2=> collinearOverlapLen(s1, s2, 10) > 8));
       const score = (stillHits ? 0 : 2) + (hasOverlap ? 0 : 1);
-      if(score > bestScore){ bestScore = score; best = p; bestMid = midSegs; }
+      if(score > bestScore){ bestScore = score; best = p; }
     }
-    placedSegs.push(...bestMid);
+    placedSegs.push(...pathSegmentsOf(best.d).slice(0, -1));
     return { e, i, p: best };
   });
+  };
+  // 経路は2回引く。1回目で「出力が実際にどの辺から出るか」を調べ、2回目で
+  // 出力が1本も使っていない出力辺（TB=右 / LR=下）への入力を許す（要求5の例外）。
+  const exitSideOf = (box, d)=>{
+    const m = d.match(/^M\s+(-?[\d.]+)\s+(-?[\d.]+)/);
+    if(!m || !box) return '';
+    const x = +m[1], y = +m[2];
+    if(Math.abs(y - (box.y + box.h)) <= 1.5) return 'bottom';
+    if(Math.abs(y - box.y) <= 1.5) return 'top';
+    if(Math.abs(x - (box.x + box.w)) <= 1.5) return 'right';
+    if(Math.abs(x - box.x) <= 1.5) return 'left';
+    return '';
+  };
+  const CROSS_OUT = lay.dir === 'TB' ? 'right' : 'bottom';
+  const crossUsed = new Set();
+  buildRoutes(()=> false).forEach(item=>{
+    if(!item) return;
+    if(exitSideOf(lay.boxById.get(item.e.from), item.p.d) === CROSS_OUT) crossUsed.add(item.e.from);
+  });
+  const linkRenders = buildRoutes((id)=> !crossUsed.has(id));
+  // 同じノードの同じ辺から出る線の根元を、辺に沿って等間隔に並べ直す（要求5）
+  spreadRoots(linkRenders, lay.boxById);
 
   // 経路がノードの並び（lay.width/height）よりはみ出すことがある（隙間を通る経路など）。
   // はみ出した分だけキャンバスを広げ、負の座標が出た場合は原点をずらして描画が切れないようにする。
@@ -1255,6 +1430,12 @@ function drawSvg(state){
       minX = Math.min(minX, x1, x2); maxX = Math.max(maxX, x1, x2);
       minY = Math.min(minY, y1, y2); maxY = Math.max(maxY, y1, y2);
     });
+    // 接続のラベルも範囲に入れる。入れないとレーンの外に出たラベルが切れて見えなくなる。
+    if(item.e.label){
+      const tw = labelPixelWidth(item.e.label);
+      minX = Math.min(minX, item.p.mid.x - tw/2 - 2); maxX = Math.max(maxX, item.p.mid.x + tw/2 + 2);
+      minY = Math.min(minY, item.p.mid.y - 11);       maxY = Math.max(maxY, item.p.mid.y + 11);
+    }
   });
   const shiftX = -Math.min(0, minX), shiftY = -Math.min(0, minY);
   const W = (maxX + shiftX) + pad * 2;
@@ -1276,7 +1457,7 @@ function drawSvg(state){
       out.push(`<g data-pick="lane" data-idx="${state.lanes.indexOf(l)}">`);
       out.push(`<rect class="sl-shape" x="0" y="${band.start}" width="${lay.width}" height="${band.size}" fill="${esc(fill)}" fill-opacity="0.55" stroke="#B9C7DA"></rect>`);
       out.push(`<rect x="0" y="${band.start}" width="${LAYOUT.laneHeaderW}" height="${band.size}" fill="${esc(fill)}" stroke="#B9C7DA"></rect>`);
-      wrapLabel(l.label, 14, 3).forEach((ln, i, all)=>{
+      wrapLabel(l.label, 14, headerLines(band.size)).forEach((ln, i, all)=>{
         const y = band.start + band.size/2 + (i - (all.length-1)/2) * 15 + 5;
         out.push(`<text x="${LAYOUT.laneHeaderW/2}" y="${y}" text-anchor="middle" font-size="12.5" font-weight="700" fill="#16233A">${esc(ln)}</text>`);
       });
@@ -1302,7 +1483,11 @@ function drawSvg(state){
       }else{
         out.push(`<g data-pick="phase" data-idx="${idx}">`);
         out.push(`<rect class="sl-shape" x="0" y="${pb.start}" width="${LAYOUT.laneHeaderW}" height="${pb.size}" fill="#EEF4FB" stroke="#B9C7DA"></rect>`);
-        out.push(`<text x="${LAYOUT.laneHeaderW/2}" y="${pb.start + pb.size/2 + 5}" text-anchor="middle" font-size="12" font-weight="700" fill="#3C516C">${esc(pb.phase.label)}</text>`);
+        // TBのフェーズ名は幅132pxの左の列に入る。横には広げられないので折り返す（レーン名と同じ扱い）
+        wrapLabel(pb.phase.label, 14, headerLines(pb.size)).forEach((ln, i, all)=>{
+          const y = pb.start + pb.size/2 + (i - (all.length-1)/2) * 15 + 5;
+          out.push(`<text x="${LAYOUT.laneHeaderW/2}" y="${y}" text-anchor="middle" font-size="12" font-weight="700" fill="#3C516C">${esc(ln)}</text>`);
+        });
         out.push(`</g>`);
       }
     });
