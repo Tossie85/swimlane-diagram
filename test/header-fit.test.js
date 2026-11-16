@@ -11,7 +11,7 @@
 // どちらも破れると、長い名前が帯からはみ出して隣に重なったり、図の外に出て切れたりする。
 
 const assert = require('assert');
-const Swimlane = require('../media/swimlane.js');
+const Swimlane = require('../swimlane.js');
 
 let failed = 0;
 function check(name, fn) {

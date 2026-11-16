@@ -1,6 +1,6 @@
 'use strict';
 
-// 描画エンジン（assets/swimlane.js ＝ media/swimlane.js）の「ノードの辺の使い分け」を検証する。
+// 描画エンジン（swimlane.js）の「ノードの辺の使い分け」を検証する。
 //
 //   ・出力（線の棒側）は 右・下 から出す
 //   ・入力（矢印の先側）は 左・上 へ入れる
@@ -14,7 +14,7 @@
 // これが崩れると、同じ場所から線が出入りして図が読めなくなる。
 
 const assert = require('assert');
-const Swimlane = require('../media/swimlane.js');
+const Swimlane = require('../swimlane.js');
 
 let failed = 0;
 function check(name, fn) {
