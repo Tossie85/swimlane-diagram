@@ -43,6 +43,9 @@ swimlane
 
 ## 使い方
 
+`swimlane.js` を1つ手元に置けば動きます（このリポジトリの
+[swimlane.js](swimlane.js) をそのまま使えます）。
+
 ### ブラウザ
 
 ```html
@@ -57,16 +60,10 @@ swimlane
 </script>
 ```
 
-CDN から読む場合（npm 公開後）:
-
-```html
-<script src="https://cdn.jsdelivr.net/npm/swimlane-diagram@1/swimlane.js"></script>
-```
-
 ### Node.js
 
 ```js
-const Swimlane = require('swimlane-diagram');
+const Swimlane = require('./swimlane.js');
 
 const result = Swimlane.render(code);
 if (result.ok) {
