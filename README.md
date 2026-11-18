@@ -57,8 +57,18 @@ swimlane
 
 ## 使い方
 
-`swimlane.js` を1つ手元に置けば動きます（このリポジトリの
-[swimlane.js](swimlane.js) をそのまま使えます）。
+`swimlane.js` を1つ手元に置けば動きます。入手の仕方は3つあります。
+
+```
+npm install swimlane-diagram
+```
+
+```html
+<script src="https://cdn.jsdelivr.net/npm/swimlane-diagram@1.2.1/swimlane.js"></script>
+```
+
+このリポジトリの [swimlane.js](swimlane.js) をそのまま置いても構いません。
+CDN は**版を固定して**読み込みます（`@1.2.1` を外すと、次の版が出たときに図が変わります）。
 
 ### ブラウザ
 
@@ -77,7 +87,7 @@ swimlane
 ### Node.js
 
 ```js
-const Swimlane = require('./swimlane.js');
+const Swimlane = require('swimlane-diagram');   // 手元に置いた場合は './swimlane.js'
 
 const result = Swimlane.render(code);
 if (result.ok) {
