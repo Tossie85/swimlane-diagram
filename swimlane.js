@@ -1635,7 +1635,7 @@ function renderTo(target, code){
 }
 
 return {
-  VERSION: '1.0.0',
+  VERSION: '1.1.0',
   SHAPES,
   LINK_STYLES,
   isDot,
