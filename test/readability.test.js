@@ -276,6 +276,44 @@ check('交差している所に、またぎが入る', () => {
   assert.ok(hops >= 1, 'またぎが1つも入っていない（交差しているのに通り抜けている）');
 });
 
+check('角のすぐ先にある交差も、またぐ', () => {
+  // 角を丸めたぶん「またげる範囲」が狭まり、角の直後の交差が素通りしていた。
+  // README の図では (340,358) がそれで、角から13pxしか離れていない。
+  // 角丸を小さくしてでもまたぐ。交差の数とまたぎの数が合うことで見る。
+  const svg = svgOf(ORDER_FLOW);
+  const { hit, shown } = pathPairs(svg);
+  const segsOf = new Map([...hit].map(([i, d]) => [i, segmentsOf(d)]));
+
+  let crossings = 0;
+  segsOf.forEach((aSegs, ai) => {
+    aSegs.forEach(h => {
+      if (Math.abs(h[1] - h[3]) > 0.5) return;               // 横の区間
+      const x1 = Math.min(h[0], h[2]), x2 = Math.max(h[0], h[2]);
+      segsOf.forEach((bSegs, bi) => {
+        if (bi === ai) return;
+        bSegs.forEach(v => {
+          if (Math.abs(v[0] - v[2]) > 0.5) return;           // 縦の区間
+          const y1 = Math.min(v[1], v[3]), y2 = Math.max(v[1], v[3]);
+          const x = v[0], y = h[1];
+          if (x < x1 + 3 || x > x2 - 3) return;              // 端の際は数えない
+          if (y < y1 + 3 || y > y2 - 3) return;
+          crossings++;
+        });
+      });
+    });
+  });
+
+  let hops = 0;
+  hit.forEach((d, i) => {
+    const corners = (d.match(/[HV]/g) || []).length - 1;
+    const curves = (shown.get(i).match(/Q/g) || []).length;
+    hops += Math.max(0, curves - Math.max(0, corners));
+  });
+
+  assert.ok(crossings > 0, '交差のある図で検証していない');
+  assert.strictEqual(hops, crossings, `交差 ${crossings} か所に対して、またぎが ${hops} 個しかない`);
+});
+
 check('合流している所に、点が打たれる', () => {
   // 2本が同じノードへ入る図。点が無いと、交差なのか合流なのか分からない。
   const svg = svgOf([
