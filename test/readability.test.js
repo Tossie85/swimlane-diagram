@@ -211,6 +211,102 @@ check('戻りの辺が、同じレーンの中に収まる', () => {
   assert.ok(back, 'ノードが見つからない');
 });
 
+// ---------------------------------------------------------------------------
+// 4. 見た目の装飾（角丸・またぎ・合流の点・●のラベルの背景）
+// ---------------------------------------------------------------------------
+
+/* 同じ接続につき path が2本出る。class="sl-hit" が判定用（直角）、もう1本が見た目用。 */
+function pathPairs(svg) {
+  const hit = new Map();
+  [...svg.matchAll(/<path class="sl-hit" d="([^"]+)"[^>]*data-idx="(\d+)"/g)]
+    .forEach(m => hit.set(+m[2], m[1]));
+  const shown = new Map();
+  [...svg.matchAll(/<path d="([^"]+)"[^>]*data-pick="link" data-idx="(\d+)"/g)]
+    .forEach(m => { if (!shown.has(+m[2])) shown.set(+m[2], m[1]); });
+  return { hit, shown };
+}
+
+/* d の最初と最後の点 */
+function endsOf(d) {
+  const nums = [...String(d).matchAll(/[MLQ]\s+([-\d.]+)\s+([-\d.]+)(?:\s+([-\d.]+)\s+([-\d.]+))?/g)];
+  const first = nums[0];
+  const last = nums[nums.length - 1];
+  return {
+    start: { x: +first[1], y: +first[2] },
+    end: last[3] !== undefined ? { x: +last[3], y: +last[4] } : { x: +last[1], y: +last[2] },
+  };
+}
+
+check('装飾した線が、判定用の経路と同じ所から出て同じ所へ入る', () => {
+  const svg = svgOf(ORDER_FLOW);
+  const { hit, shown } = pathPairs(svg);
+  assert.ok(hit.size > 0 && hit.size === shown.size, '経路の本数が合わない');
+  hit.forEach((d, i) => {
+    // 判定用は H/V の折れ線、見た目用は M/L/Q。読み方が違うので別々にほどく
+    const segs = segmentsOf(d);
+    const last = segs[segs.length - 1];
+    const a = { start: { x: segs[0][0], y: segs[0][1] }, end: { x: last[2], y: last[3] } };
+    const b = endsOf(shown.get(i));
+    const far = (p, q) => Math.abs(p.x - q.x) > 0.6 || Math.abs(p.y - q.y) > 0.6;
+    assert.ok(!far(a.start, b.start), `線#${i} の根元がずれている: ${JSON.stringify([a.start, b.start])}`);
+    assert.ok(!far(a.end, b.end), `線#${i} の矢先がずれている: ${JSON.stringify([a.end, b.end])}`);
+  });
+});
+
+check('交差している所に、またぎが入る', () => {
+  // 関係のない2本が十字に交わる図。またがないと、つながって見える。
+  const svg = svgOf([
+    'swimlane',
+    'lane a "A"',
+    'lane b "B"',
+    'node p1 "左上" lane=a',
+    'node p2 "左下" lane=a',
+    'node q1 "右上" lane=b',
+    'node q2 "右下" lane=b',
+    'p1 -> q2 "下へ"',
+    'q1 -> p2 "上へ"',
+  ].join('\n'));
+  const { hit, shown } = pathPairs(svg);
+  let hops = 0;
+  hit.forEach((d, i) => {
+    const corners = (d.match(/[HV]/g) || []).length - 1;     // 折れ角の数
+    const curves = (shown.get(i).match(/Q/g) || []).length;  // 角丸 + またぎ
+    hops += Math.max(0, curves - Math.max(0, corners));
+  });
+  assert.ok(hops >= 1, 'またぎが1つも入っていない（交差しているのに通り抜けている）');
+});
+
+check('合流している所に、点が打たれる', () => {
+  // 2本が同じノードへ入る図。点が無いと、交差なのか合流なのか分からない。
+  const svg = svgOf([
+    'swimlane',
+    'lane a "A"',
+    'lane b "B"',
+    'node s1 "受付" lane=a',
+    'node s2 "再提出" lane=a',
+    'node g "審査" lane=b',
+    's1 -> g "新規"',
+    's2 -> g "再"',
+  ].join('\n'));
+  const dots = (svg.match(/<circle[^>]*r="3\.2"/g) || []).length;
+  assert.ok(dots >= 1, '合流の点が打たれていない');
+});
+
+check('●のラベルに背景の箱が敷かれている', () => {
+  // ●から出る線はラベルの真上を通る。箱が無いと線が文字を貫いて読めない。
+  const svg = svgOf([
+    'swimlane',
+    'lane a "担当"',
+    'node s "引合" lane=a shape=startdot',
+    'node n1 "見積を出す" lane=a',
+    's -> n1',
+  ].join('\n'));
+  // ●のラベルは接続ラベルと違って data-pick を持たない白い箱
+  const plain = [...svg.matchAll(/<rect x="[-\d.]+" y="[-\d.]+" width="[\d.]+" height="18" rx="4" fill="#FFFFFF" stroke="#D3E1EF"><\/rect>/g)];
+  assert.ok(plain.length >= 1, '●のラベルの背景が無い');
+  assert.ok(svg.includes('>引合</text>'), '●のラベルそのものが無い');
+});
+
 if (failed) {
   console.error(`\n${failed} test(s) failed.`);
   process.exit(1);

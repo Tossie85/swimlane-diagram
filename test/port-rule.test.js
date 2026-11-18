@@ -61,8 +61,12 @@ function portsOf(code) {
   const ports = new Map();   // nodeId -> [{ kind, side, x, y, link }]
   const push = (id, rec) => { if (!ports.has(id)) ports.set(id, []); ports.get(id).push(rec); };
   const seen = new Set();
-  // 当たり判定用と見た目用で同じ経路のpathが2本出るので、片方だけ見る
-  for (const m of svg.matchAll(/<path d="([^"]+)"[^>]*data-idx="(\d+)"/g)) {
+  // 同じ接続につき path が2本出る。
+  //   class="sl-hit" … 当たり判定用。直角の折れ線そのもの（判定はこれで行う）
+  //   （もう1本）     … 見た目用。角を丸め、交差をまたいだ装飾ずみの線
+  // 辺の出入りを見るテストなので、装飾の入っていない前者を読む。
+  // 装飾で出入り口がずれていないことは readability.test.js で別に見る。
+  for (const m of svg.matchAll(/<path class="sl-hit" d="([^"]+)"[^>]*data-idx="(\d+)"/g)) {
     const i = Number(m[2]);
     if (seen.has(i)) continue;
     seen.add(i);
