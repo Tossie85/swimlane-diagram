@@ -28,7 +28,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node test/port-rule.test.js && node test/header-fit.test.js"
+    "test": "node test/port-rule.test.js && node test/header-fit.test.js && node test/readability.test.js"
   },
   "engines": {
     "node": ">=14"
