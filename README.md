@@ -3,13 +3,13 @@
 スイムレーン図（業務フロー図）を、短いテキストから SVG に描くライブラリです。
 **依存ライブラリなし・1ファイル**で、ブラウザでも Node.js でも動きます。
 
-![受注フローの例](docs/example.svg)
+![受注から入金までの流れの例](docs/example.svg)
 
 この図は、次のテキスト（`.swim`）から描かれています。
 
 ```
 swimlane
-    title "受注フロー"
+    title "受注から入金までの流れ"
     direction TB
 
     lane sales "営業" #FFF1E0
@@ -18,6 +18,7 @@ swimlane
 
     phase p1 "受付"
     phase p2 "出荷"
+    phase p3 "請求"
 
     node s "引合" lane=sales phase=p1 shape=startdot
     node n1 "見積を出す" lane=sales phase=p1
@@ -25,8 +26,12 @@ swimlane
     node d1 "与信は足りるか" lane=back phase=p1 shape=decision
     node n3 "条件を見直す" lane=sales phase=p1 color=#FFE0E0
     node n4 "受注を登録する" lane=back phase=p2
-    node n5 "出荷する" lane=ware phase=p2
-    node e "完了" lane=ware phase=p2 shape=enddot
+    node d2 "在庫はあるか" lane=ware phase=p2 shape=decision
+    node n5 "取り寄せる" lane=ware phase=p2 color=#FFF3D6
+    node n6 "出荷する" lane=ware phase=p2
+    node n7 "請求書を送る" lane=back phase=p3
+    node n8 "入金を確認する" lane=back phase=p3
+    node e "完了" lane=back phase=p3 shape=enddot
 
     s -> n1
     n1 -> n2
@@ -34,12 +39,20 @@ swimlane
     d1 -> n4 "OK"
     d1 -> n3 "NG"
     n3 -> n2 "再見積"
-    n4 -> n5 "出荷を指示"
-    n5 -> e
+    n4 -> d2 "出荷を指示"
+    d2 -> n6 "あり"
+    d2 -> n5 "なし"
+    n5 -> n6 "入荷後"
+    n6 --> n7 "出荷を通知"
+    n7 -> n8
+    n8 -> e
 ```
 
 **誰が（レーン）× いつ（フェーズ）** の交点にノードを置くと、位置と線の通り道は
 自動で決まります。座標を書く必要はありません。
+
+上の図には、判断（ひし形）・差し戻し・入出力（平行四辺形）・破線（連絡や書類の受け渡し）が入っています。
+線が交わる所は**またいで**、合流する所には**点**が付くので、通り抜けているのか集まっているのかが見分けられます。
 
 ## 使い方
 
@@ -139,9 +152,19 @@ Swimlane.renderTo(target, code)  // セレクタか要素に描画して → { o
 npm test
 ```
 
-31件の検証が走ります。線の出入りする辺の使い分け（出力は右・下、入力は左・上）、
+39件の検証が走ります。線の出入りする辺の使い分け（出力は右・下、入力は左・上）、
 見出しが帯からはみ出していないこと、ラベルの上を他の線が通らないこと、
 交差と合流が見分けられることなど、**図の読みやすさに直結する性質**を確かめています。
+上の図（`examples/order.swim` と、その英語版）そのものも、この検証を通しています。
+
+```
+npm run example
+```
+
+README の図（`docs/example.svg`）を `examples/order.swim` から描き直します。
+図を変えたときは、手で SVG を直すのではなく、これを走らせます。
+同じ図は拡張2本の README にも載せているので、
+そちらは `docs/example*.png` を置き換えます（Marketplace は SVG を受け付けないため）。
 
 ## ライセンス
 

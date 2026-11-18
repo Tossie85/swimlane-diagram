@@ -28,6 +28,7 @@
     "LICENSE"
   ],
   "scripts": {
+    "example": "node build/make-example.js",
     "test": "node test/port-rule.test.js && node test/header-fit.test.js && node test/readability.test.js"
   },
   "engines": {

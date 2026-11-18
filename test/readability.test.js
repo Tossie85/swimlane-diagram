@@ -237,8 +237,8 @@ function endsOf(d) {
   };
 }
 
-check('装飾した線が、判定用の経路と同じ所から出て同じ所へ入る', () => {
-  const svg = svgOf(ORDER_FLOW);
+/* 見た目の線（角丸とまたぎ入り）が、当たり判定の経路と同じ所から出入りしているか */
+function assertSameEnds(svg) {
   const { hit, shown } = pathPairs(svg);
   assert.ok(hit.size > 0 && hit.size === shown.size, '経路の本数が合わない');
   hit.forEach((d, i) => {
@@ -251,6 +251,10 @@ check('装飾した線が、判定用の経路と同じ所から出て同じ所�
     assert.ok(!far(a.start, b.start), `線#${i} の根元がずれている: ${JSON.stringify([a.start, b.start])}`);
     assert.ok(!far(a.end, b.end), `線#${i} の矢先がずれている: ${JSON.stringify([a.end, b.end])}`);
   });
+}
+
+check('装飾した線が、判定用の経路と同じ所から出て同じ所へ入る', () => {
+  assertSameEnds(svgOf(ORDER_FLOW));
 });
 
 check('交差している所に、またぎが入る', () => {
@@ -276,11 +280,9 @@ check('交差している所に、またぎが入る', () => {
   assert.ok(hops >= 1, 'またぎが1つも入っていない（交差しているのに通り抜けている）');
 });
 
-check('角のすぐ先にある交差も、またぐ', () => {
-  // 角を丸めたぶん「またげる範囲」が狭まり、角の直後の交差が素通りしていた。
-  // README の図では (340,358) がそれで、角から13pxしか離れていない。
-  // 角丸を小さくしてでもまたぐ。交差の数とまたぎの数が合うことで見る。
-  const svg = svgOf(ORDER_FLOW);
+/* 直角の経路どうしの交差の数と、見た目の線に入ったまたぎの数を数える。
+   またぎ = 角丸ではない Q。角の数だけ Q があるのが素の状態。 */
+function crossingsAndHops(svg) {
   const { hit, shown } = pathPairs(svg);
   const segsOf = new Map([...hit].map(([i, d]) => [i, segmentsOf(d)]));
 
@@ -310,6 +312,14 @@ check('角のすぐ先にある交差も、またぐ', () => {
     hops += Math.max(0, curves - Math.max(0, corners));
   });
 
+  return { crossings, hops };
+}
+
+check('角のすぐ先にある交差も、またぐ', () => {
+  // 角を丸めたぶん「またげる範囲」が狭まり、角の直後の交差が素通りしていた。
+  // README の図では (340,358) がそれで、角から13pxしか離れていない。
+  // 角丸を小さくしてでもまたぐ。交差の数とまたぎの数が合うことで見る。
+  const { crossings, hops } = crossingsAndHops(svgOf(ORDER_FLOW));
   assert.ok(crossings > 0, '交差のある図で検証していない');
   assert.strictEqual(hops, crossings, `交差 ${crossings} か所に対して、またぎが ${hops} 個しかない`);
 });
@@ -343,6 +353,56 @@ check('●のラベルに背景の箱が敷かれている', () => {
   const plain = [...svg.matchAll(/<rect x="[-\d.]+" y="[-\d.]+" width="[\d.]+" height="18" rx="4" fill="#FFFFFF" stroke="#D3E1EF"><\/rect>/g)];
   assert.ok(plain.length >= 1, '●のラベルの背景が無い');
   assert.ok(svg.includes('>引合</text>'), '●のラベルそのものが無い');
+});
+
+// ---------------------------------------------------------------------------
+// 5. 配っている図そのもの（3つの README に同じものが載る）
+// ---------------------------------------------------------------------------
+
+// examples/ の図は、このリポジトリと拡張2本の README に同じものを載せている。
+// 図が大きくなるほど、ここまでの観点が崩れていないかを目で追いきれないので、
+// 配っている図そのものを通す。docs/example.svg はこの図から作る。
+const fs = require('fs');
+const path = require('path');
+
+['order.swim', 'order.en.swim'].forEach(name => {
+  const code = fs.readFileSync(path.join(__dirname, '..', 'examples', name), 'utf8');
+
+  check(`examples/${name} が描けて、どのフェーズも段の間隔がそろっている`, () => {
+    const r = Swimlane.render(code);
+    assert.ok(r.ok, '描けない: ' + (r.errors || []).join(' / '));
+
+    const lay = layoutOf(code);
+    const phases = [...new Set(lay.boxes.map(b => b.node.phaseId))];
+    phases.forEach(ph => {
+      const rows = [...new Set(
+        lay.boxes.filter(b => !Swimlane.isDot(b.node.shape) && b.node.phaseId === ph)
+                 .map(b => b.y)
+      )].sort((a, b) => a - b);
+      if (rows.length < 3) return;                   // 段が2つ以下なら比べる意味がない
+      const pitches = [];
+      for (let i = 1; i < rows.length; i++) pitches.push(rows[i] - rows[i - 1]);
+      assert.ok(
+        Math.max(...pitches) - Math.min(...pitches) <= 2,
+        `フェーズ ${ph} の段の間隔がそろっていない: ${JSON.stringify(pitches)}`
+      );
+    });
+  });
+
+  check(`examples/${name} のラベルの上を、他の線が通らない`, () => {
+    const hits = labelCollisions(code);
+    assert.deepStrictEqual(hits, [], hits.join(' / '));
+  });
+
+  check(`examples/${name} の交差が、すべてまたいである`, () => {
+    const { crossings, hops } = crossingsAndHops(svgOf(code));
+    assert.ok(crossings > 0, '交差のない図なので、またぎを見られない');
+    assert.strictEqual(hops, crossings, `交差 ${crossings} か所に対して、またぎが ${hops} 個`);
+  });
+
+  check(`examples/${name} の線が、判定用の経路と同じ所から出入りする`, () => {
+    assertSameEnds(svgOf(code));
+  });
 });
 
 if (failed) {

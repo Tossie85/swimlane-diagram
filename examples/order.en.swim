@@ -1,0 +1,38 @@
+swimlane
+    title "From order to payment"
+    direction TB
+
+    lane sales "Sales" #FFF1E0
+    lane back "Back office" #E6EFFC
+    lane ware "Warehouse" #E7F6EC
+
+    phase p1 "Intake"
+    phase p2 "Fulfillment"
+    phase p3 "Billing"
+
+    node s "Inquiry" lane=sales phase=p1 shape=startdot
+    node n1 "Send a quote" lane=sales phase=p1
+    node n2 "Take the order" lane=sales phase=p1 shape=io
+    node d1 "Credit approved?" lane=back phase=p1 shape=decision
+    node n3 "Revise the terms" lane=sales phase=p1 color=#FFE0E0
+    node n4 "Register the order" lane=back phase=p2
+    node d2 "In stock?" lane=ware phase=p2 shape=decision
+    node n5 "Order from supplier" lane=ware phase=p2 color=#FFF3D6
+    node n6 "Ship it" lane=ware phase=p2
+    node n7 "Send the invoice" lane=back phase=p3
+    node n8 "Confirm payment" lane=back phase=p3
+    node e "Done" lane=back phase=p3 shape=enddot
+
+    s -> n1
+    n1 -> n2
+    n2 -> d1 "Ask for review"
+    d1 -> n4 "OK"
+    d1 -> n3 "NG"
+    n3 -> n2 "Re-quote"
+    n4 -> d2 "Request shipment"
+    d2 -> n6 "Yes"
+    d2 -> n5 "No"
+    n5 -> n6 "On arrival"
+    n6 --> n7 "Shipment notice"
+    n7 -> n8
+    n8 -> e
