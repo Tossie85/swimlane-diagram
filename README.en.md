@@ -66,11 +66,11 @@ npm install swimlane-diagram
 ```
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/swimlane-diagram@1.2.1/swimlane.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/swimlane-diagram@1.3.0/swimlane.js"></script>
 ```
 
 You can also drop [swimlane.js](swimlane.js) from this repository onto your own server.
-**Pin the version** when you load it from a CDN (without `@1.2.1`, your diagram may look different
+**Pin the version** when you load it from a CDN (without `@1.3.0`, your diagram may look different
 once the next release lands).
 
 ### Browser

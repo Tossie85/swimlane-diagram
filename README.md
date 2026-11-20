@@ -66,11 +66,11 @@ npm install swimlane-diagram
 ```
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/swimlane-diagram@1.2.1/swimlane.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/swimlane-diagram@1.3.0/swimlane.js"></script>
 ```
 
 このリポジトリの [swimlane.js](swimlane.js) をそのまま置いても構いません。
-CDN は**版を固定して**読み込みます（`@1.2.1` を外すと、次の版が出たときに図が変わります）。
+CDN は**版を固定して**読み込みます（`@1.3.0` を外すと、次の版が出たときに図が変わります）。
 
 ### ブラウザ
 

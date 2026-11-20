@@ -49,6 +49,17 @@ READMES.forEach(name => {
   });
 });
 
+check('README に書いてある CDN の版が、いまの version と同じ', () => {
+  // 版を上げるたびに案内も直す必要がある。忘れると、古い版を勧め続けることになる。
+  READMES.forEach(name => {
+    const md = fs.readFileSync(path.join(root, name), 'utf8');
+    const hits = [...md.matchAll(/swimlane-diagram@([\d.]+)/g)].map(m => m[1]);
+    assert.ok(hits.length > 0, name + ' に CDN の案内が無い（書式が変わった？）');
+    const stale = [...new Set(hits)].filter(v => v !== pkg.version);
+    assert.deepStrictEqual(stale, [], name + ' が古い版を案内している: ' + stale.join(', '));
+  });
+});
+
 check('README の図が、npm に配るファイル一覧に入っている', () => {
   const md = READMES.map(n => fs.readFileSync(path.join(root, n), 'utf8')).join('\n');
   const imgs = [...md.matchAll(/!\[[^\]]*\]\(([^):?#]+)\)/g)]
