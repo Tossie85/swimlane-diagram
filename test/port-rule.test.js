@@ -346,8 +346,10 @@ check('ループを含んでも並び順が崩れない', () => {
   });
 });
 
-// フェーズを使っていない図では、流れ方向のスロットは同じ幅で並ぶ。
-// どこか1箇所だけ間隔が広い＝ノードが1つも無いスロットが挟まっている、ということ。
+/* 段の間隔は段ごとに変わる（ラベルがまたぐ隙間だけ広い）ので、
+   「間隔が一定か」では空きスロットを見られない。
+   空きスロットがあれば、そこにノード1つ分（＋その前後の隙間）が丸ごと入るので、
+   間隔がノード2つ分に届く。届かないことで「誰も使っていない段は無い」と見る。 */
 check('流れ方向に空きスロットができない', () => {
   const cases = { 差戻し, レーンまたぎ, 集約, 三分岐, 三分岐と戻り, ループ };
   Object.entries(cases).forEach(([label, body]) => {
@@ -359,8 +361,10 @@ check('流れ方向に空きスロットができない', () => {
         .filter(b => !Swimlane.isDot(b.node.shape))
         .map(b => (dir === 'TB' ? b.y : b.x)))].sort((p, q) => p - q);
       const gaps = at.slice(1).map((v, i) => v - at[i]);
-      assert.ok(Math.max(...gaps) === Math.min(...gaps),
-        `${label} ${dir}: スロットの間隔がそろっていない（空きスロットがある） ${gaps.join(', ')}`);
+      const box = lay.boxes.find(b => !Swimlane.isDot(b.node.shape));
+      const nodeMain = dir === 'TB' ? box.h : box.w;
+      assert.ok(Math.max(...gaps) < nodeMain * 2,
+        `${label} ${dir}: 間隔がノード2つ分に届いている（空きスロットがある） ${gaps.join(', ')}`);
     });
   });
 });

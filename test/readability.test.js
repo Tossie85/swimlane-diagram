@@ -125,10 +125,16 @@ check('●のラベルと次のノードの間が空いている', () => {
 // 2. 誰も使っていない段が残らない
 // ---------------------------------------------------------------------------
 
-check('段の間隔が一定で、空いた段が残らない', () => {
+check('空いた段が残らず、何も通らない隙間は詰まっている', () => {
   // 段（行）はフェーズの中でレーンをまたいで揃えてある。どのレーンも使っていない段が
-  // 残ると、そこだけ間隔が2倍になる。別レーンを経由して戻ってくる形で実際に起きていた
-  // （「見積を出す」→「注文を受ける」だけ他の2.7倍空いていた）。
+  // 残ると、そこだけノード1つ分まるごと余る。別レーンを経由して戻ってくる形で実際に
+  // 起きていた（「見積を出す」→「注文を受ける」だけ他の2.7倍空いていた）。
+  //
+  // 隙間の広さは段ごとに違ってよい。ラベル付きの接続がまたぐ隙間だけを広げ、
+  // 何も通らない隙間は詰める（1.3.0）。そのぶん「一定かどうか」では見られないので、
+  //   ・ノード2つ分に届く隙間は無い  → 空いた段は無い
+  //   ・いちばん狭い隙間は既定どおり → 無駄に広げていない
+  // の2つで見る。
   const lay = layoutOf(ORDER_FLOW);
   const rows = [...new Set(
     lay.boxes.filter(b => !Swimlane.isDot(b.node.shape) && b.node.phaseId === 'p1')
@@ -137,10 +143,14 @@ check('段の間隔が一定で、空いた段が残らない', () => {
   assert.ok(rows.length >= 3, '段が少なすぎて検証にならない: ' + JSON.stringify(rows));
   const pitches = [];
   for (let i = 1; i < rows.length; i++) pitches.push(rows[i] - rows[i - 1]);
-  const min = Math.min(...pitches), max = Math.max(...pitches);
+  const nodeH = lay.boxes.find(b => !Swimlane.isDot(b.node.shape)).h;
   assert.ok(
-    max - min <= 2,
-    `段の間隔がそろっていない: ${JSON.stringify(pitches)}（誰も使っていない段が残っている）`
+    Math.max(...pitches) < nodeH * 2,
+    `ノード2つ分に届く隙間がある（空いた段か、広げすぎ）: ${JSON.stringify(pitches)}`
+  );
+  assert.ok(
+    Math.min(...pitches) <= nodeH + 24,
+    `何も通らない隙間まで広がっている: ${JSON.stringify(pitches)}`
   );
 });
 
@@ -376,25 +386,48 @@ const path = require('path');
 ['order.swim', 'order.en.swim'].forEach(name => {
   const code = fs.readFileSync(path.join(__dirname, '..', 'examples', name), 'utf8');
 
-  check(`examples/${name} が描けて、どのフェーズも段の間隔がそろっている`, () => {
+  check(`examples/${name} が描けて、空いた段が残らない`, () => {
     const r = Swimlane.render(code);
     assert.ok(r.ok, '描けない: ' + (r.errors || []).join(' / '));
 
     const lay = layoutOf(code);
+    const nodeH = lay.boxes.find(b => !Swimlane.isDot(b.node.shape)).h;
     const phases = [...new Set(lay.boxes.map(b => b.node.phaseId))];
     phases.forEach(ph => {
       const rows = [...new Set(
         lay.boxes.filter(b => !Swimlane.isDot(b.node.shape) && b.node.phaseId === ph)
                  .map(b => b.y)
       )].sort((a, b) => a - b);
-      if (rows.length < 3) return;                   // 段が2つ以下なら比べる意味がない
+      if (rows.length < 2) return;
       const pitches = [];
       for (let i = 1; i < rows.length; i++) pitches.push(rows[i] - rows[i - 1]);
+      // 隙間の広さは段ごとに違ってよい（ラベルがまたぐ隙間だけ広い）。
+      // ノード2つ分に届く隙間があれば、誰も使っていない段が残っているということ。
       assert.ok(
-        Math.max(...pitches) - Math.min(...pitches) <= 2,
-        `フェーズ ${ph} の段の間隔がそろっていない: ${JSON.stringify(pitches)}`
+        Math.max(...pitches) < nodeH * 2,
+        `フェーズ ${ph} にノード2つ分の隙間がある（空いた段か、広げすぎ）: ${JSON.stringify(pitches)}`
       );
     });
+  });
+
+  check(`examples/${name} のラベルが、ノードに重ならない`, () => {
+    // 戻りの辺のようにノードのすぐ脇を通る線は、ラベルが図形に食い込みやすい
+    // （英語版の「Re-quote」が「Revise the terms」に7px重なっていた）。
+    const svg = svgOf(code);
+    const lay = layoutOf(code);
+    const labels = [...svg.matchAll(
+      /<rect x="([-\d.]+)" y="([-\d.]+)" width="([\d.]+)" height="18"[^>]*data-pick="link" data-idx="(\d+)"/g
+    )].map(m => ({ x: +m[1], y: +m[2], w: +m[3], h: 18, idx: +m[4] }));
+    assert.ok(labels.length > 0, 'ラベルが1つも見つからない（描画の形が変わった？）');
+    const hits = [];
+    labels.forEach(lb => {
+      lay.boxes.forEach(nb => {
+        const over = !(lb.x + lb.w <= nb.x || nb.x + nb.w <= lb.x ||
+                       lb.y + lb.h <= nb.y || nb.y + nb.h <= lb.y);
+        if (over) hits.push(`ラベル#${lb.idx} が ${nb.node.id}(${nb.node.label}) に重なっている`);
+      });
+    });
+    assert.deepStrictEqual(hits, [], hits.join(' / '));
   });
 
   check(`examples/${name} のラベルの上を、他の線が通らない`, () => {
