@@ -35,20 +35,24 @@ check('swimlane.js の VERSION と package.json の version が同じ', () => {
   );
 });
 
-check('README が参照しているファイルが置いてある', () => {
-  const md = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
-  const refs = [...md.matchAll(/[!]?\[[^\]]*\]\(([^):?#]+)\)/g)]
-    .map(m => m[1])
-    .filter(r => !/^(https?:|mailto:|#)/.test(r));
-  assert.ok(refs.length > 0, 'README がどのファイルも参照していない（書式が変わった？）');
-  const missing = [...new Set(refs)].filter(r => !fs.existsSync(path.join(root, r)));
-  assert.deepStrictEqual(missing, [], '置いていないファイルを指している: ' + missing.join(', '));
+const READMES = ['README.md', 'README.en.md'];
+
+READMES.forEach(name => {
+  check(name + ' が参照しているファイルが置いてある', () => {
+    const md = fs.readFileSync(path.join(root, name), 'utf8');
+    const refs = [...md.matchAll(/[!]?\[[^\]]*\]\(([^):?#]+)\)/g)]
+      .map(m => m[1].replace(/^\.\//, ''))
+      .filter(r => !/^(https?:|mailto:|#)/.test(r));
+    assert.ok(refs.length > 0, name + ' がどのファイルも参照していない（書式が変わった？）');
+    const missing = [...new Set(refs)].filter(r => !fs.existsSync(path.join(root, r)));
+    assert.deepStrictEqual(missing, [], '置いていないファイルを指している: ' + missing.join(', '));
+  });
 });
 
 check('README の図が、npm に配るファイル一覧に入っている', () => {
-  const md = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
+  const md = READMES.map(n => fs.readFileSync(path.join(root, n), 'utf8')).join('\n');
   const imgs = [...md.matchAll(/!\[[^\]]*\]\(([^):?#]+)\)/g)]
-    .map(m => m[1])
+    .map(m => m[1].replace(/^\.\//, ''))
     .filter(r => !/^https?:/.test(r));
   imgs.forEach(img => {
     const listed = (pkg.files || []).some(f => f === img || img.startsWith(f.replace(/\/$/, '') + '/'));
