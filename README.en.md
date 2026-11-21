@@ -36,25 +36,27 @@ swimlane
     node e "Done" lane=back phase=p3 shape=enddot
 
     s -> n1
-    n1 -> n2
-    n2 -> d1 "Ask for review"
-    d1 -> n4 "OK"
-    d1 -> n3 "NG"
-    n3 -> n2 "Re-quote"
-    n4 -> d2 "Request shipment"
-    d2 -> n6 "Yes"
-    d2 -> n5 "No"
-    n5 -> n6 "On arrival"
+    n1 => n2
+    n2 => d1 "Ask for review"
+    d1 => n4 "OK"
+    d1 ==> n3 "NG" color=#D32F2F
+    n3 --> n2 "Re-quote" color=#D32F2F
+    n4 => d2 "Request shipment"
+    d2 => n6 "Yes"
+    d2 ==> n5 "No" color=#1565C0
+    n5 --> n6 "On arrival" color=#1565C0
     n6 --> n7 "Shipment notice"
-    n7 -> n8
+    n7 => n8
     n8 -> e
 ```
 
 Put a node at the crossing of **who (lane) × when (phase)**, and the position and the route of every
 line are worked out for you. You never write coordinates.
 
-The example uses decisions (diamonds), a rework loop, input/output (parallelograms) and a dashed
-line (a hand-off or a notice). Where lines cross, one **hops over** the other; where they merge, they
+The example uses decisions (diamonds), a rework loop and input/output (parallelograms). It also
+uses all four line types: a **thick solid line for the main path**, a red dashed one for the rework
+loop, a blue one for the detour taken when stock runs out, and a thin dashed one for a notice.
+Thickness comes from `=>` and `==>`, colour from `color=`. Where lines cross, one **hops over** the other; where they merge, they
 **curve into one**. So you can tell from the shape of a line alone whether it passes by or joins in.
 
 ## Getting it
@@ -184,7 +186,7 @@ logic alone and keep the rest.
 npm test
 ```
 
-108 checks run. They cover which side of a node a line leaves from and enters (out on the right and
+109 checks run. They cover which side of a node a line leaves from and enters (out on the right and
 bottom, in on the left and top), headers fitting inside their bands, phase bands keeping their
 inner padding, labels never being crossed by
 another line, crossings being distinguishable from merges — **properties that decide whether a

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><title>PNG を作る</title>
+<style>body{font-family:'Yu Gothic UI',sans-serif;padding:16px;font-size:14px}
+pre{background:#f4f8fc;padding:10px;border-radius:6px}</style></head>
+<body><h1>README 用の PNG を作る</h1><pre id="log">はじめます…</pre>
+<script>
+const JOBS = [
+  { svg: '../../docs/example.svg', png: 'example-ja.png' },
+  { svg: '../../docs/example.en.svg', png: 'example-en.png' },
+];
+const SCALE = 2;
+const log = (s)=>{ document.getElementById('log').textContent += '\n' + s; };
+const draw = (job)=> new Promise((done, fail)=>{
+  const img = new Image();
+  img.onload = ()=>{
+    const c = document.createElement('canvas');
+    c.width = Math.round(img.naturalWidth * SCALE);
+    c.height = Math.round(img.naturalHeight * SCALE);
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(img, 0, 0, c.width, c.height);
+    let url;
+    try { url = c.toDataURL('image/png'); }
+    catch(e){ fail('canvas が汚れています: ' + e.message); return; }
+    fetch('save.php?name=' + encodeURIComponent(job.png), { method:'POST', body:url })
+      .then(r=> r.text())
+      .then(t=>{ log(job.png + ' ' + c.width + 'x' + c.height + ' -> ' + t); done(); })
+      .catch(e=> fail('保存できません: ' + e.message));
+  };
+  img.onerror = ()=> fail(job.svg + ' を読めません');
+  img.src = job.svg;
+});
+(async ()=>{
+  try {
+    for (const j of JOBS) await draw(j);
+    log('ぜんぶ終わりました');
+    document.title = 'DONE';
+  } catch(e) { log('失敗: ' + e); document.title = 'FAILED'; }
+})();
+</script></body></html>

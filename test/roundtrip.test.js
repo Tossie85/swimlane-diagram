@@ -240,17 +240,22 @@ check('太い矢じりは、細い矢じりより大きい', () => {
   assert.notStrictEqual(thin, thick, '太線の矢じりは細線と同じ形ではないこと');
 });
 
-/* ---- 7. 既存の .swim が今までどおり読める ---- */
+/* ---- 7. 配っている例が、記法を一通り使っている ---- */
 
-check('examples/order.swim が、エラーなく今までどおり読める', () => {
-  const fs = require('fs');
-  const file = path.join(path.resolve(__dirname, '..'), 'examples', 'order.swim');
-  const r = Swimlane.parse(fs.readFileSync(file, 'utf8'));
-  assert.deepStrictEqual(r.errors, []);
-  assert.ok(r.state.links.length > 0, '接続が読めていること');
-  r.state.links.forEach((e) => {
-    assert.ok(e.style === 'solid' || e.style === 'dashed', '線種が今までの2種のまま: ' + e.style);
-    assert.strictEqual(e.color, '', '色は付いていないこと');
+// README に載せる図は3つのリポジトリで共有している。記法を足しても例が
+// 古いままだと、読む人は新しい書き方を目にしないので、ここで使用を強制する。
+['order.swim', 'order.en.swim'].forEach((name) => {
+  check('examples/' + name + ' が、線の4種と色を一通り使っている', () => {
+    const fs = require('fs');
+    const file = path.join(path.resolve(__dirname, '..'), 'examples', name);
+    const r = Swimlane.parse(fs.readFileSync(file, 'utf8'));
+    assert.deepStrictEqual(r.errors, []);
+    assert.ok(r.state.links.length > 0, '接続が読めていること');
+    const used = new Set(r.state.links.map((e) => e.style));
+    ARROWS.forEach(([arrow, style]) => {
+      assert.ok(used.has(style), arrow + '（' + style + '）を使っていること');
+    });
+    assert.ok(r.state.links.some((e) => e.color), '色を付けた接続があること');
   });
 });
 
