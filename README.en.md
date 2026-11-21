@@ -66,11 +66,11 @@ npm install swimlane-diagram
 ```
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/swimlane-diagram@1.3.0/swimlane.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/swimlane-diagram@1.4.0/swimlane.js"></script>
 ```
 
 You can also drop [swimlane.js](swimlane.js) from this repository onto your own server.
-**Pin the version** when you load it from a CDN (without `@1.3.0`, your diagram may look different
+**Pin the version** when you load it from a CDN (without `@1.4.0`, your diagram may look different
 once the next release lands).
 
 ### Browser
@@ -115,6 +115,15 @@ The first line is `swimlane`. Anything from `#` to the end of a line is a commen
 | `node n1 "Send a quote" lane=sales phase=p1` | A node. `lane` and `phase` decide where it sits |
 | `n1 -> n2 "label"` | A link (solid). The label is optional |
 | `n1 --> n2` | A link (dashed) |
+| `n1 => n2` | A link (thick solid) |
+| `n1 ==> n2` | A link (thick dashed) |
+
+One line means solid, two mean dashed; `=` makes it thick. Spaces around the arrow are optional
+(`n1-->n2` reads the same). A line may join only two nodes, so `n1 -> n2 -> n3` is an error.
+
+> **Different from Mermaid.** In Mermaid flowcharts `-->` is solid and `==>` is thick solid.
+> swimlane-diagram follows the rule above (one line solid, two lines dashed), so both mean the
+> opposite of what they mean in Mermaid. These are different formats, and we are not reconciling them.
 
 Attributes a node can take:
 
@@ -123,6 +132,12 @@ Attributes a node can take:
 | `lane=` / `phase=` | Lane id / phase id |
 | `shape=` | `process` (default, rectangle) / `start` / `end` (rounded) / `decision` (diamond) / `io` (parallelogram) / `startdot` (●) / `enddot` (◉) |
 | `color=` | `#RRGGBB`. Fill color of the node |
+
+Attributes a link can take:
+
+| Attribute | Values |
+|---|---|
+| `color=` | `#RRGGBB`. Color of the line and its arrowhead, and of the label box border. `#42506B` by default |
 
 Values are read as whitespace-separated tokens, so a value itself cannot contain a space.
 
@@ -142,6 +157,7 @@ When you want finer control:
 | `computeLayout(state)` | Computes coordinates only; draws nothing |
 | `drawSvg(state, layout)` | Produces the SVG string from a computed layout |
 | `SHAPES` / `LINK_STYLES` | The available shapes and line styles |
+| `LINK_COLOR` | The default line color (`#42506B`) |
 | `VERSION` | Engine version |
 
 Layout (`computeLayout`) and drawing (`drawSvg`) are separate, so you can replace the placement
@@ -168,8 +184,9 @@ logic alone and keep the rest.
 npm test
 ```
 
-39 checks run. They cover which side of a node a line leaves from and enters (out on the right and
-bottom, in on the left and top), headers fitting inside their bands, labels never being crossed by
+108 checks run. They cover which side of a node a line leaves from and enters (out on the right and
+bottom, in on the left and top), headers fitting inside their bands, phase bands keeping their
+inner padding, labels never being crossed by
 another line, crossings being distinguishable from merges — **properties that decide whether a
 diagram can be read at a glance**. The example above (`examples/order.swim` and this English
 version) goes through the same checks.

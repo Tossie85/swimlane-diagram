@@ -1,6 +1,6 @@
 {
   "name": "swimlane-diagram",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Render swimlane (cross-functional) flowcharts as SVG from a small plain-text format. Zero dependencies, single file, works in the browser and in Node.",
   "keywords": [
     "swimlane",
@@ -32,7 +32,7 @@
   ],
   "scripts": {
     "example": "node build/make-example.js",
-    "test": "node test/meta.test.js && node test/port-rule.test.js && node test/header-fit.test.js && node test/readability.test.js"
+    "test": "node test/meta.test.js && node test/port-rule.test.js && node test/header-fit.test.js && node test/readability.test.js && node test/roundtrip.test.js && node test/phase-band.test.js"
   },
   "engines": {
     "node": ">=14"

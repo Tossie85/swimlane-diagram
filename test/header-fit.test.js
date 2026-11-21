@@ -151,7 +151,9 @@ check('ふつうの長さの名前は「…」で切り詰めない', () => {
 
 check('短い見出しの図は寸法が変わらない（これまでの図を動かさない）', () => {
   // 見出しが帯に収まっている図では、帯を広げる処理は何もしない
-  const expect = { TB: '364x319', LR: '743x188' };
+  // 2026-11-21: フェーズ帯に内側の余白（phasePad 17px）を入れ、末尾の二重の余白をやめたので
+  // どちらも 11px 伸びた（上に +17、下は -6）。帯を広げる処理の有無とは関係ない
+  const expect = { TB: '364x330', LR: '754x188' };
   ['TB', 'LR'].forEach(dir => {
     const r = Swimlane.render(短い名前.replace(/^swimlane\n/, `swimlane\ndirection ${dir}\n`));
     assert.strictEqual(`${r.width}x${r.height}`, expect[dir],
